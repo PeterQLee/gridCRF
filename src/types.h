@@ -1,8 +1,9 @@
 #ifndef TYPES_H
 #define TYPES_H
-typedef i32 int;
-typedef u32 unsigned int;
-typedef i64 long long;
-typedef u64 unsigned long long;
-typedef f32 float;
-#end
+typedef int i32;
+typedef unsigned int u32;
+typedef long long i64;
+typedef unsigned long long u64;
+typedef float f32;
+typedef double f64;
+#endif

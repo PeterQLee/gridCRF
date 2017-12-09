@@ -8,20 +8,21 @@
 #include "immintrin.h"
 
 #define COORD4(dir,x,y,f,p,X,Y,NF) (dir*X*Y*NF*2 + x*Y*NF*2 + y*NF*2 + f*2 + p)
-
+#define COORD3(x,y,n, X,Y,NF,O) (x*Y*NF*2*O + y*NF*2*O + n*2*O)
+#define FACT_TYPE NPU_FLOAT32
 typedef float fact_type;
 typedef struct{
   i32 n_outcomes, n_factors,depth;
 PyArrayObject *V;
 f32 *float_data;
-}gridCRF_py;
+}gridCRF_t;
 
 
-static void _train( gridCRF_py * self, PyArrayObject *X, PyArrayObject *Y);
-static void _loopyCPU(gridCRF_py* self, PyArrayObject *X, PyArrayObject *Y);
+static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y);
+static void _loopyCPU(gridCRF_t* self, PyArrayObject *X, PyArrayObject *Y);
 
-static void fit (gridCRF_py * self, PyObject *args);
-static PyArrayObject *predict(gridCRF_py *self, PyObject *args);
+static void fit (gridCRF_t * self, PyObject *args);
+static PyArrayObject *predict(gridCRF_t *self, PyObject *args);
 
 static PyMethodDef  gridCRF_methods[]={
   {"fit",(PyCFunction)fit,METH_VARARGS,"Fit model"},
@@ -30,26 +31,33 @@ static PyMethodDef  gridCRF_methods[]={
 };
 
 static PyMemberDef gridCRF_members[]={
-  {"V",T_OBJECT,offsetof(gridCRF_py,V),0,"Energy transfer matrix"},
+  {"V",T_OBJECT,offsetof(gridCRF_t,V),0,"Energy transfer matrix"},
   {NULL}
 };
 
 PyMODINIT_FUNC initmodel(void);
 
-static void gridCRF_dealloc(gridCRF *self);
-static int gridCRF_init(gridCRF *self, PyObject *args, PyObject *kwds);
+static void gridCRF_dealloc(gridCRF_t *self);
+static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds);
 static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwds);
 
+static PyModuleDef gridCRFmodule = {
+  PyModuleDef_HEAD_INIT,
+  "SquareCRF",
+  "TBH",
+  -1,
+  NULL, NULL, NULL, NULL, NULL
+};
 
 static PyTypeObject gridCRF_Type = {
   PyVarObject_HEAD_INIT(NULL, 0)
   "gridCRF.BoardPy",             /* tp_name */
-  sizeof(gridCRF), /* tp_basicsize */
+  sizeof(gridCRF_t), /* tp_basicsize */
   0,                         /* tp_itemsize */
   gridCRF_dealloc,                         /* tp_dealloc */
   0,                         /* tp_print */
   0,                         /* tp_getattr */
-  0,                        p /* tp_setattr */
+  0,                         /* tp_setattr */
   0,                         /* tp_as_async */
   0,                         /* tp_repr */
   0,                         /* tp_as_number */
@@ -80,12 +88,5 @@ static PyTypeObject gridCRF_Type = {
   (initproc)gridCRF_init,      /* tp_init */
   0,                         /* tp_alloc */
   gridCRF_new,                 /* tp_new */
-};
-static PyModuleDef gridCRFmodule = {
-  PyModuleDef_HEAD_INIT,
-  "SquareCRF",
-  "TBH",
-  -1,
-  NULL, NULL, NULL, NULL, NULL
 };
 #endif
