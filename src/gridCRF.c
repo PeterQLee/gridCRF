@@ -34,7 +34,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
   i32 n_factors=self->n_factors;
   
   n=self->depth;
-  f64 * stack[self->n_outcomes ]; //TODO, preallocate this on heap.
+  f64 *stack[self->n_factors ]; //TODO, preallocate this on heap.
   f64 *tmp;
   f32 *p;
  
@@ -43,16 +43,16 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
   for (i=0;i<dims[0];i++) {
     for (j=0;j<dims[1];j++) {
       *((f64 *) yv)=0.0; // set outome to 0
-      if (((i32 *)PyArray_GETPTR(Y,i,j,0)) == 0  && ((i32 *)PyArray_GETPTR(Y,i,j,1)) == 0 )continue;
+      if (((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && ((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       //do traversal.
       c=0;
 	
       for (a=-n;a<=n;a++) {
 	for (b=-n;b<=0;b++){
 	  if (b==0 && a==n) break;
-	  l=(i32*) PyArray_GETPTR(Y,i+a,j+b,0);
-	  tmp=(f64*)PyArray_GETPTR(X,i+a,j+b,l);
-	  *((f64*)&stack[c++]) = tmp;
+	  l=(i32*) PyArray_GETPTR3(Y,i+a,j+b,0);
+	  tmp=(f64*)PyArray_GETPTR3(X,i+a,j+b,l);
+	  stack[c++] = tmp;
 
 	  //TODO: Improve with SSE
 	  yv[0]+= ((f32*)tmp)[0];
@@ -73,11 +73,11 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
       yv[1]=yv[1]*den;
 
       //TODO: speed up with SSE ops
-      l=(i32*)PyArray_GETPTR(Y,i,j,0);
-      p=(f32*)PyArray_GETPTR(X,i,j,0);
+      l=(i32*)PyArray_GETPTR3(Y,i,j,0);
+      p=(f32*)PyArray_GETPTR3(X,i,j,0);
       change[0] = ALPHA * ((*l)-yv[0]) * (*p);
-      l=(i32*)PyArray_GETPTR(Y,i,j,1);
-      p=(f32*)PyArray_GETPTR(X,i,j,1);
+      l=(i32*)PyArray_GETPTR3(Y,i,j,1);
+      p=(f32*)PyArray_GETPTR3(X,i,j,1);
       change[1] = ALPHA * ((*l)-yv[1]) * (*p);
 
       //update all of the pointers we visited with change.
