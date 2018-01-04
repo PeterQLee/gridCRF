@@ -4,7 +4,7 @@ import numpy as np
 import os
 
 setup_kwargs={
-    'extra_compile_args':['-msse','-msse4','-mavx','-mavx2']
+    'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-O0','-fno-inline']
 }
 
 setup(name="BoardPy", version="1.0",
