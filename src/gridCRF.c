@@ -44,28 +44,7 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   Py_INCREF(self->V);
 
   
-  self->com=(i32*)malloc(sizeof(i32)*n_factors);
-  self->rom=(i32*)malloc(sizeof(i32)*n_factors);
-  i32 *com=self->com;
-  i32 *rom=self->rom;
-  n=0;
-  for (d=1;d<=depth;d++ ) {
-    for (i=0;i<d*4;i++) {
-      if (i<d) {
-	com[n]= -d *dims[1] * self->n_factors*2*2 - i*self->n_factors*2*2;
-	rom[n]= +d *dims[1] * self->n_factors*2*2 + i*self->n_factors*2*2;
-      }
-      else if (i>=d*3) {
-	com[n]= +d *dims[1] * self->n_factors*2*2 - (d-(i-d*3))*self->n_factors*2*2;
-	rom[n]= -d *dims[1] * self->n_factors*2*2 + (d-(i-d*3))*self->n_factors*2*2;	
-      }
-      else{
-	com[n]= (-2*d+i)*dims[1] * self->n_factors*2*2 - d*self->n_factors*2*2;
-	rom[n]= (2*d-i)*dims[1] * self->n_factors*2*2 + d*self->n_factors*2*2;
-      }
-      n++;
-    }
-  }
+
   return 0;
 }
 static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwds){
@@ -94,6 +73,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
   f32 max,den;
   i32 *ainc = malloc(sizeof(i32)*n_factors);
   i32 *binc = malloc(sizeof(i32)*n_factors);
+
+  
   //printf("n_factors %d\n",n_factors);
   //Get the appropriate coordinate offsets
   n=0;
@@ -196,7 +177,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   
   f32 * V_data=self->V_data;
   npy_intp x,y;
-  i64 m,n,depth=self->depth,i;
+  i64 m,n,depth=self->depth,i,j;
   //f32 * F_V = (f32 *) calloc( dims[0] * dims[1] * (self->n_factors*2) *2, sizeof(f32));
   f32 * F_V = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
@@ -234,8 +215,41 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   
   //i32 com[n_factors]; //TODO: preallocate
   //i32 rom[n_factors]; //Indices of destinations from factor
-  i32 *com=self->com;
-  i32 *rom=self->rom;
+  i32 *com=(i32*)malloc(sizeof(i32)*n_factors);
+  i32 *rom=(i32*)malloc(sizeof(i32)*n_factors);
+  n=0;
+  for (j=1;j<=depth;j++ ) {
+    for (i=0;i<j*4;i++) {
+      if (i<j) {
+	com[n]= -j *dims[1] * n_factors*2*2 - i*n_factors*2*2;
+	rom[n]= +j *dims[1] * n_factors*2*2 + i*n_factors*2*2;
+      }
+      else if (i>=j*3) {
+	com[n]= +j *dims[1] * n_factors*2*2 - (j-(i-j*3))*n_factors*2*2;
+	rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;	
+      }
+      else{
+	com[n]= (-2*j+i)*dims[1] * n_factors*2*2 - j*n_factors*2*2;
+	rom[n]= (2*j-i)*dims[1] * n_factors*2*2 + j*n_factors*2*2;
+      }
+      
+      n++;
+    }
+  }
+  n=0;
+  printf("n_factors %d\n",n_factors);
+  printf("com\n");
+  for (j=1;j<=depth;j++ ) {
+    printf("%d %d %d %d\n",com[n],com[n+1],com[n+2],com[n+3]);
+    n+=4;
+  }
+  printf("\nrom\n");
+  n=0;
+  for (j=1;j<=depth;j++ ) {
+    printf("%d %d %d %d\n",rom[n],rom[n+1],rom[n+2],rom[n+3]);
+    n+=4;
+  }
+
 
   //__m256 adj;
   //Need softmaxed versions of V
@@ -349,12 +363,12 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	//Make MS, energies + variable to factor messages..
 	//do top and left factors
 
-	for (n=0;n<n_factors; n+=4) {
+	for (n=0;n<n_factors; n+=4) {//Here
 	  origin=COORD3(x,y,n,dims[0],dims[1],2*n_factors,2);
 	  r1=_mm256_load_ps(&RE[n*2]);
 	  r2=_mm256_load_ps(&RE[n_factors*2 + n*2]);
 	  r3=_mm256_load_ps(&V_F[origin]);
-	  r4=_mm256_permute_ps(r3, 0xB0);
+	  r4=_mm256_permute_ps(r3, 0xA0);
 	  r1=_mm256_add_ps(r1,r4);
 	  r4=_mm256_permute_ps(r3, 0xF5);
 	  r2=_mm256_add_ps(r2,r4);
@@ -364,33 +378,36 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 
 	    //((f64*)&F_V)[com[m]] = ((f64*)&r3)[m-n];
 	    //((f64*)F_V)[origin+com[m]] = ((__m256d) r3)[m-n];
-	    if (!(origin+com[m] < 0 || origin+com[m] >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+com[m]] = r3[2*(m-n)];
+	    if (!(origin+com[m] +2*(m-n)< 0 || origin+com[m]+2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[origin+com[m] + 2*(m-n)] = r3[2*(m-n)];
+	      printf("mxy %d %d %d %f %d\n", m,x,y, r3[2*(m-n)],origin+com[m]+2*(m-n));
 	    }
-	    if (!(origin+com[m] +1 < 0 || origin+com[m] +1 >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+com[m]+1] = r3[2*(m-n)+1];
+	    if (!(origin+com[m] +1 + 2*(m-n) < 0 || origin+com[m] +1 +2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[origin+com[m]+1 + 2*(m-n)] = r3[2*(m-n)+1];
 	    }
 	    
 	  }
 	}
 	//do below and right factors
-	for (n=n_factors;n<n_factors; n+=4) {
-	  r1=_mm256_load_ps(&CE[n*2]);
-	  r2=_mm256_load_ps(&CE[n_factors*2 + n*2]);
+	for (n=n_factors;n<2*n_factors; n+=4) {
+	  origin=COORD3(x,y,(n-n_factors),dims[0],dims[1],2*n_factors,2);
+	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
+	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
 	  r3=_mm256_load_ps(&V_F[origin]);
-	  r4=_mm256_permute_ps(r3, 0xB0);
+	  r4=_mm256_permute_ps(r3, 0xA0);
 	  r1=_mm256_add_ps(r1,r4);
 	  r4=_mm256_permute_ps(r3, 0xF5);
 	  r2=_mm256_add_ps(r2,r4);
 	  r3=_mm256_max_ps(r1,r2);
-	  //Delegate r3 to appropriate destinations
+	  //Delegate r3 to appropriate destination
 	  for (m=n;m<n+4;m++){ //todo, calculate rom
 	    //((f64*)F_V)[origin+rom[m-n_factors]] = ((__m256d) r3)[m-n];
-	    if (!(origin+rom[m-n_factors] < 0 || origin+rom[m-n_factors] >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+rom[m-n_factors]] = r3[2*(m-n)];
+	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[origin+rom[m-n_factors]+2*(m-n)] = r3[2*(m-n)];
+	      printf("mxy %d %d %d %f %d\n", m,x,y, r3[2*(m-n)], origin+rom[m-n_factors] +2*(m-n));
 	    }
-	    if (!(origin+rom[m-n_factors] +1 < 0 || origin+rom[m-n_factors]+1 >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	    F_V[origin+rom[m-n_factors]+1] = r3[2*(m-n)+1];
+	    if (!(origin+rom[m-n_factors] +1 +2*(m-n) < 0 || origin+rom[m-n_factors]+1+2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	    F_V[origin+rom[m-n_factors]+1+2*(m-n)] = r3[2*(m-n)+1];
 	    }
 	  }
 	}
@@ -410,7 +427,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  _mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
 	}
       
-	for (i=1;i<n_factors*2;i++) {
+	for (i=0;i<n_factors*2;i++) {
 	  //printf("xyi %ld %ld %ld\n",x,y,i);
 	  base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
 	  r1=(__m256)_mm256_set1_pd(base);

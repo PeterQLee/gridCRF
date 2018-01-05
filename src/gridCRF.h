@@ -23,7 +23,7 @@ typedef struct{
   i64 depth;
   PyArrayObject *V;
   f32 *V_data;
-  i32 *com, *rom;
+  //i32 *com, *rom;
 }gridCRF_t;
 
 
