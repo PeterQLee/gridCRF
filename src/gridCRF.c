@@ -177,7 +177,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   
   f32 * V_data=self->V_data;
   npy_intp x,y;
-  i64 m,n,depth=self->depth,i,j;
+  i64 m,n,depth=self->depth,i,j,co;
   //f32 * F_V = (f32 *) calloc( dims[0] * dims[1] * (self->n_factors*2) *2, sizeof(f32));
   f32 * F_V = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
@@ -217,20 +217,25 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   //i32 rom[n_factors]; //Indices of destinations from factor
   i32 *com=(i32*)malloc(sizeof(i32)*n_factors);
   i32 *rom=(i32*)malloc(sizeof(i32)*n_factors);
+  om_pair *co_pairs=(om_pair*)malloc(sizeof(om_pair)*n_factors);
+  om_pair cop;
   n=0;
   for (j=1;j<=depth;j++ ) {
     for (i=0;i<j*4;i++) {
       if (i<j) {
 	com[n]= -j *dims[1] * n_factors*2*2 - i*n_factors*2*2;
 	rom[n]= +j *dims[1] * n_factors*2*2 + i*n_factors*2*2;
+	co_pairs[n]=(om_pair){-j,-i};
       }
       else if (i>=j*3) {
 	com[n]= +j *dims[1] * n_factors*2*2 - (j-(i-j*3))*n_factors*2*2;
-	rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;	
+	rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;
+	co_pairs[n]=(om_pair){j,-(j-(i-j*3))};
       }
       else{
 	com[n]= (-2*j+i)*dims[1] * n_factors*2*2 - j*n_factors*2*2;
 	rom[n]= (2*j-i)*dims[1] * n_factors*2*2 + j*n_factors*2*2;
+	co_pairs[n]=(om_pair){-2*j+i,-j};
       }
       
       n++;
@@ -248,6 +253,11 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   for (j=1;j<=depth;j++ ) {
     printf("%d %d %d %d\n",rom[n],rom[n+1],rom[n+2],rom[n+3]);
     n+=4;
+  }
+
+  printf("\ncop\n");
+  for (j=0;j<n_factors;j++ ) {
+    printf("%d %d\n",co_pairs[j].x,co_pairs[j].y);
   }
 
 
@@ -362,9 +372,9 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	//factor to variable messages
 	//Make MS, energies + variable to factor messages..
 	//do top and left factors
-
+	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
 	for (n=0;n<n_factors; n+=4) {//Here
-	  origin=COORD3(x,y,n,dims[0],dims[1],2*n_factors,2);
+
 	  r1=_mm256_load_ps(&RE[n*2]);
 	  r2=_mm256_load_ps(&RE[n_factors*2 + n*2]);
 	  r3=_mm256_load_ps(&V_F[origin]);
@@ -375,22 +385,23 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  r3=_mm256_max_ps(r1,r2);
 	  //Delegate r3 to appropriate destinations
 	  for (m=n;m<n+4;m++){
-
+	    cop=co_pairs[m];
+	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
+	    co=origin+com[m] + 2*(m-n) + n_factors*2;
 	    //((f64*)&F_V)[com[m]] = ((f64*)&r3)[m-n];
 	    //((f64*)F_V)[origin+com[m]] = ((__m256d) r3)[m-n];
-	    if (!(origin+com[m] +2*(m-n)< 0 || origin+com[m]+2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+com[m] + 2*(m-n)] = r3[2*(m-n)];
-	      printf("mxy %d %d %d %f %d\n", m,x,y, r3[2*(m-n)],origin+com[m]+2*(m-n));
-	    }
-	    if (!(origin+com[m] +1 + 2*(m-n) < 0 || origin+com[m] +1 +2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+com[m]+1 + 2*(m-n)] = r3[2*(m-n)+1];
+	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[co] = r3[2*(m-n)];
+	      printf("mxy %d %d %d %f %d %d %d %d\n", m,x,y, r3[2*(m-n)],co,x+cop.x,y+cop.y, 2*(m-n));
+	      F_V[co+1] = r3[2*(m-n)+1];
 	    }
 	    
 	  }
 	}
 	//do below and right factors
+	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
 	for (n=n_factors;n<2*n_factors; n+=4) {
-	  origin=COORD3(x,y,(n-n_factors),dims[0],dims[1],2*n_factors,2);
+
 	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
 	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
 	  r3=_mm256_load_ps(&V_F[origin]);
@@ -401,13 +412,14 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  r3=_mm256_max_ps(r1,r2);
 	  //Delegate r3 to appropriate destination
 	  for (m=n;m<n+4;m++){ //todo, calculate rom
+	    cop=co_pairs[m-n_factors];
+	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
+	    co=origin+rom[m-n_factors] + 2*(m-n);
 	    //((f64*)F_V)[origin+rom[m-n_factors]] = ((__m256d) r3)[m-n];
 	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[origin+rom[m-n_factors]+2*(m-n)] = r3[2*(m-n)];
-	      printf("mxy %d %d %d %f %d\n", m,x,y, r3[2*(m-n)], origin+rom[m-n_factors] +2*(m-n));
-	    }
-	    if (!(origin+rom[m-n_factors] +1 +2*(m-n) < 0 || origin+rom[m-n_factors]+1+2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	    F_V[origin+rom[m-n_factors]+1+2*(m-n)] = r3[2*(m-n)+1];
+	      F_V[co] = r3[2*(m-n)];
+	      printf("mxy %d %d %d %f %d %d %d %d %d %d\n", m,x,y, r3[2*(m-n)], co, x-cop.x,y-cop.y,2*(m-n),rom[m-n_factors], origin);
+	      F_V[co+1] = r3[2*(m-n)+1];
 	    }
 	  }
 	}

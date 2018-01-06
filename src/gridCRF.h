@@ -26,6 +26,9 @@ typedef struct{
   //i32 *com, *rom;
 }gridCRF_t;
 
+typedef struct{
+  i32 x,y;
+}om_pair;
 
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y);
 static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X);
