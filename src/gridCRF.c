@@ -21,10 +21,10 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   self->V_data=NULL;
   self->depth=0;
   npy_int depth_=0;
-  
+
   
   if (!PyArg_ParseTuple(args,"i",&depth_)) return 1;
-  depth_=1;
+  //depth_=1;
   depth=(i64)depth_;
   self->depth=depth;
   
@@ -55,12 +55,12 @@ static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwd
 
 //backend functions
 
-static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
-  
+static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt){
+ 
   npy_intp * dims= PyArray_DIMS(X);
   i64 depth= self->depth;
   i32 i,j,n,a,b,d,k;
-  i32 its, epochs=1000;
+  i32 its, epochs=tpt.epochs;//epochs=1000;
   i32 *l;
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
@@ -74,6 +74,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
   i32 *ainc = malloc(sizeof(i32)*n_factors);
   i32 *binc = malloc(sizeof(i32)*n_factors);
 
+  f32 alpha=tpt.alpha;
   
   //printf("n_factors %d\n",n_factors);
   //Get the appropriate coordinate offsets
@@ -134,10 +135,10 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
 	//TODO: speed up with SSE ops
 	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
 	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	change[0] = ALPHA * (((*l)&1)-yv[0]) * (*p);
+	change[0] = alpha * (((*l)&1)-yv[0]) * (*p);
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
 	p=(f32*)PyArray_GETPTR3(X,i,j,1);
-	change[1] = ALPHA * (((*l)&1)-yv[1]) * (*p);
+	change[1] = alpha * (((*l)&1)-yv[1]) * (*p);
       
 	//update all of the pointers we visited with change.
 	//TODO: speed up with SSE, multithreading, or GPU impl.
@@ -162,22 +163,23 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y){
 
 }
 
-static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
-
+static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t lpt,PyArrayObject *refimg){
+  i32 WARN_FLAG=1;
   //loopy belief propagation using CPU
 
   //Need to initialize all messages
   f32 a,b,c,d,denr,denc,maxv;
   npy_intp * dims= PyArray_DIMS(X);
   i64 n_factors=self->n_factors;
-  i64 max_it=15,it;
+  i64 max_it=lpt.max_its,it;
   f32 max_marg_diff=0.0f;
-  f32 stop_thresh=0.01f;
+  f32 stop_thresh=lpt.stop_thresh;
   i32 converged=0;
   
   f32 * V_data=self->V_data;
   npy_intp x,y;
   i64 m,n,depth=self->depth,i,j,co;
+  i32 l,ll;
   //f32 * F_V = (f32 *) calloc( dims[0] * dims[1] * (self->n_factors*2) *2, sizeof(f32));
   f32 * F_V = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
@@ -186,7 +188,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     F_V[i]=0.0f;
     V_F[i]=0.0f;
   }
-  printf ("%lx\n",F_V);
+  //printf ("%lx\n",F_V);
   //*((i64*)x) = 0xfeeddad;
   f32 * marginals= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
   f32 * mu= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
@@ -241,25 +243,25 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
       n++;
     }
   }
+  
   n=0;
-  printf("n_factors %d\n",n_factors);
-  printf("com\n");
-  for (j=1;j<=depth;j++ ) {
-    printf("%d %d %d %d\n",com[n],com[n+1],com[n+2],com[n+3]);
-    n+=4;
-  }
-  printf("\nrom\n");
-  n=0;
-  for (j=1;j<=depth;j++ ) {
-    printf("%d %d %d %d\n",rom[n],rom[n+1],rom[n+2],rom[n+3]);
-    n+=4;
-  }
-
-  printf("\ncop\n");
-  for (j=0;j<n_factors;j++ ) {
-    printf("%d %d\n",co_pairs[j].x,co_pairs[j].y);
-  }
-
+  /* printf("n_factors %d\n",n_factors); */
+  /* printf("com\n"); */
+  /* //  for (j=1;j<=depth;j++ ) { */
+  /* for (j=0;j<n_factors;j++ ) { */
+  /*   //printf("%d %d %d %d\n",com[n],com[n+1],com[n+2],com[n+3]); */
+  /*   printf("%d\n",com[j]); */
+  /*   //n+=4; */
+  /* } */
+  /* printf("\nrom\n"); */
+  /* for (j=0;j<n_factors;j++ ) { */
+  /*   printf("%d\n",rom[j]); */
+  /* } */
+  /* printf("\ncop\n"); */
+  /* for (j=0;j<n_factors;j++ ) { */
+  /*   printf("%d %d\n",co_pairs[j].x,co_pairs[j].y); */
+  /* } */
+  
 
   //__m256 adj;
   //Need softmaxed versions of V
@@ -273,7 +275,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   for (i=0;i<2*n_factors*2;i+=8) {
     r1=_mm256_load_ps(&V_data[i]);
     r1=exp256_ps(r1);
-
+    //assert (!(isnan(r1[6]) || isnan(r1[7])));
     RE[i/2]=r1[0];
     RE[i/2+1]=r1[1];
     RE[n_factors*2+i/2]=r1[2];
@@ -282,7 +284,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     RE[i/2+3]=r1[5];
     RE[n_factors*2+i/2+2]=r1[6];
     RE[n_factors*2+i/2+3]=r1[7];
-    printf("SET %ld %ld %ld %ld %ld %ld %ld %ld\n", i/2, i/2+1, i/2+n_factors*2, i/2+n_factors*2+1 , i/2+2, i/2+3 , i/2+2+n_factors*2,i/2+3+n_factors*2);
+    //printf("SET %ld %ld %ld %ld %ld %ld %ld %ld\n", i/2, i/2+1, i/2+n_factors*2, i/2+n_factors*2+1 , i/2+2, i/2+3 , i/2+2+n_factors*2,i/2+3+n_factors*2);
 
     /*mvtemp=((__m256d)r1)[0];
     *((f64*)&RE[i/2]) = mvtemp;
@@ -305,29 +307,34 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     c=RE[n_factors*2+2*i];
     d=RE[n_factors*2+2*i+1];
     maxv=a>b?a:b;//row
-    maxv=0;
-    //maxv=a>c?a:c;//row
-    denr=1/(a+b-2*maxv);
-    RE[i*2]= (a-maxv)*denr;
-    RE[i*2+1] = (b-maxv) *denr;
+    if (maxv==0 || a+b==0) printf("ALERT");
+    maxv=1/maxv;
+    denr=1/((a+b)*maxv);
+    RE[i*2]= (a*maxv)*denr;
+    RE[i*2+1] = (b*maxv) *denr;
     maxv=c>d?c:d;
-    maxv=0;
-    denr=1/(c+d-2*maxv);
-    RE[i*2 + n_factors*2]= (c-maxv)*denr;
-    RE[i*2+1 + n_factors*2] = (d-maxv)*denr;
+    if (maxv==0 || c+d ==0 ) printf("ALERT");
+    maxv=1/maxv;
+    //maxv=0;
+    denr=1/((c+d)*maxv);
+    RE[i*2 + n_factors*2]= (c*maxv)*denr;
+    RE[i*2+1 + n_factors*2] = (d*maxv)*denr;
 
     maxv=a>c?a:c;//col
-    maxv=0;
-    denr=1/(a+c-2*maxv);
-    CE[i*2]= (a-maxv)*denr;
-    CE[i*2 + 1] = (c-maxv)*denr;
+    if (maxv==0 || a+c==0) printf("ALERT");
+    maxv=1/maxv;
+    denr=1/((a+c)*maxv);
+    CE[i*2]= (a*maxv)*denr;
+    CE[i*2 + 1] = (c*maxv)*denr;
     maxv=b>d?b:d; //conditional jump
-    maxv=0;
-    denr=1/(b+d-2*maxv);
-    CE[i*2 + 2*n_factors]= (b-maxv)*denr;
-    CE[i*2 + 1 + 2*n_factors] = (d-maxv)*denr;
+    if (maxv==0 || b+d ==0 ) printf("ALERT");
+    maxv=1/maxv;
+    denr=1/((b+d)*maxv);
+    CE[i*2 + 2*n_factors]= (b*maxv)*denr;
+    CE[i*2 + 1 + 2*n_factors] = (d*maxv)*denr;
 
   }
+  /*
   printf("RE\n");
   for (i=0;i<n_factors;i++ ) {
     //printf("I %d %d %d %d\n",i*2,i*2+1, n_factors*2+2*i, n_factors*2+2*i+1);
@@ -345,10 +352,11 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     c=CE[n_factors*2+2*i];
     d=CE[n_factors*2+2*i+1];
     printf("%f %f %f %f\n",a,b,c,d);
-  }  
+    }*/
 
   for (it=0;it< max_it && !converged;it++){
     printf("it %d\n",it);
+    /*
     printf("V_F\n");
     for (n=0;n<dims[0] * dims[1] * (n_factors);n++){
       printf("%f %f %f %f\n",V_F[n*4],V_F[n*4+1],V_F[n*4+2],V_F[n*4+3]);
@@ -357,7 +365,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     for (n=0;n<dims[0] * dims[1] * (n_factors);n++){
       printf("%f %f %f %f\n",F_V[n*4],F_V[n*4+1],F_V[n*4+2],F_V[n*4+3]);
     }
-
+  
     for (n=0;n<dims[0]*dims[1];n++) {
       printf("%f %f\n",marginals[n*2],marginals[n*2+1]);
     }
@@ -366,15 +374,17 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
       printf("%f %f\n",mu[n*2],mu[n*2+1]);
     }
     printf("\n");
-
+  */
+    l=1;
     for (x=0;x<dims[0];x++) {
       for (y=0;y<dims[1];y++) {
 	//factor to variable messages
 	//Make MS, energies + variable to factor messages..
 	//do top and left factors
 	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
-	for (n=0;n<n_factors; n+=4) {//Here
-
+	if (refimg)
+	  l= *((i32*) PyArray_GETPTR2(refimg,x,y));
+	for (n=0;n<n_factors && l; n+=4) {//Here
 	  r1=_mm256_load_ps(&RE[n*2]);
 	  r2=_mm256_load_ps(&RE[n_factors*2 + n*2]);
 	  r3=_mm256_load_ps(&V_F[origin]);
@@ -384,15 +394,19 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  r2=_mm256_add_ps(r2,r4);
 	  r3=_mm256_max_ps(r1,r2);
 	  //Delegate r3 to appropriate destinations
+	
 	  for (m=n;m<n+4;m++){
 	    cop=co_pairs[m];
 	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
 	    co=origin+com[m] + 2*(m-n) + n_factors*2;
+	    
+	      
 	    //((f64*)&F_V)[com[m]] = ((f64*)&r3)[m-n];
 	    //((f64*)F_V)[origin+com[m]] = ((__m256d) r3)[m-n];
 	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
-	      printf("mxy %d %d %d %f %d %d %d %d\n", m,x,y, r3[2*(m-n)],co,x+cop.x,y+cop.y, 2*(m-n));
+	      //printf("mxy %d %d %d %f %d %d %d %d\n", m,x,y, r3[2*(m-n)],co,x+cop.x,y+cop.y, 2*(m-n));
 	      F_V[co+1] = r3[2*(m-n)+1];
 	    }
 	    
@@ -400,7 +414,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	}
 	//do below and right factors
 	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
-	for (n=n_factors;n<2*n_factors; n+=4) {
+	for (n=n_factors;n<2*n_factors && l; n+=4) {
 
 	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
 	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
@@ -414,11 +428,12 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  for (m=n;m<n+4;m++){ //todo, calculate rom
 	    cop=co_pairs[m-n_factors];
 	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
 	    co=origin+rom[m-n_factors] + 2*(m-n);
 	    //((f64*)F_V)[origin+rom[m-n_factors]] = ((__m256d) r3)[m-n];
 	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
-	      printf("mxy %d %d %d %f %d %d %d %d %d %d\n", m,x,y, r3[2*(m-n)], co, x-cop.x,y-cop.y,2*(m-n),rom[m-n_factors], origin);
+	      //printf("mxy %d %d %d %f %d %d %d %d %d %d\n", m,x,y, r3[2*(m-n)], co, x-cop.x,y-cop.y,2*(m-n),rom[m-n_factors], origin);
 	      F_V[co+1] = r3[2*(m-n)+1];
 	    }
 	  }
@@ -494,6 +509,13 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	  assert(COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+ 1 < dims[0] * dims[1] * (n_factors*2) *2 && COORD3(x,y,n,dims[0],dims[1],2*n_factors,2) > 0);
 	  marginals[origin]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]; // invalid read of 4
 	  marginals[origin+1]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+1];
+	  if (isnan(marginals[origin]) && WARN_FLAG) {
+	    printf("MARGINAL WARNING %d %d\n",x,y);
+	    for (j=0;j<n_factors*2;j++) {
+	      printf("%f %f\n",F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)],F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)+1]); // invalid read of 4
+	    }
+	    WARN_FLAG=0;
+	  }
 	}
 	a=fabs(marginals[origin]-mu[origin]);
 	max_marg_diff= a > max_marg_diff ? a : max_marg_diff;
@@ -521,6 +543,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
     for (y=0;y<dims[1];y++) {
       origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
       assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
+      //printf("%f ",marginals[origin+1]-marginals[origin]);
       if (marginals[origin] > marginals[origin+1]) {
 	*((npy_int32*)PyArray_GETPTR2(ret,x,y))= 0;
 	//ret_data[x*dims[1] + y]=0;
@@ -530,7 +553,9 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
 	//ret_data[x*dims[1] + y]=1;
       }
     }
+    //printf("\n");
   }
+
   //PyArray_ENABLEFLAGS((PyArrayObject*)ret, NPY_ARRAY_OWNDATA); //TODO: check if this actually frees memory
 
   return ret;
@@ -539,13 +564,17 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X){
   
 // visible functions
 
-static PyObject* fit (gridCRF_t * self, PyObject *args){
+static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
 
   printf("Start fit\n");
+  train_params_t tpt;
+  tpt.epochs=100;
+  tpt.alpha=0.001f;
+  static char * kwlist[] = {"train","lab","epochs","alpha",NULL};
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTuple(args,"OO",&train,&lab)) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|if",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha))) return NULL;
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) return NULL;
   if (!PyList_Check(lab)) return NULL;
@@ -553,7 +582,15 @@ static PyObject* fit (gridCRF_t * self, PyObject *args){
   if (!PyArray_Check(f) || PyArray_NDIM(f) !=3 || PyArray_DIMS(f)[2] !=2) return NULL;
   f=PyList_GetItem(lab,0);
   if (!PyArray_Check(f) || PyArray_NDIM(f) !=3 || PyArray_DIMS(f)[2] !=2) return NULL;
-
+  
+  if (PyArray_TYPE(train) != NPY_FLOAT32) {
+    PyErr_SetString(PyExc_TypeError, "Training image must be 32-bit floats");
+    return NULL;
+  }
+  if (PyArray_TYPE(test) != NPY_UINT32) {
+    PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
+    return NULL;
+  }
   //TODO: check num elements of f is the same
   //TODO: Also need to ensure that Y is integer and X is f32
   
@@ -567,16 +604,24 @@ static PyObject* fit (gridCRF_t * self, PyObject *args){
     //TODO: check to ensure that each element in train and lab match dimensions
     X=PyList_GetItem(train,i);
     Y=PyList_GetItem(lab,i);
-    _train(self,(PyArrayObject*)X,(PyArrayObject*)Y);
+    _train(self,(PyArrayObject*)X,(PyArrayObject*)Y,tpt);
   }
   return Py_BuildValue("");  
 }
 
-static PyObject *predict(gridCRF_t* self, PyObject *args){//PyArrayObject *X, PyArrayObject *Y){
-  PyObject *test, *out;
-  if (!PyArg_ParseTuple(args,"O",&test)) return NULL;
+static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyArrayObject *X, PyArrayObject *Y){
+  PyObject *test, *out, *refimg=NULL;
+  loopy_params_t lpt;
+  lpt.stop_thresh=0.01f;
+  lpt.max_its=100;
+  static char * kwlist []= {"X","stop_thresh","max_its","refimg",NULL};
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fiO",kwlist,&test,&(lpt.stop_thresh),&(lpt.max_its),&refimg)) return NULL;
   if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 || PyArray_DIMS(test)[2] !=2) return NULL;
-  out=_loopyCPU(self,test);
+  if (PyArray_TYPE(test) != NPY_FLOAT32) {
+    PyErr_SetString(PyExc_TypeError, "Data must be 32-bit floats");
+    return NULL;
+  }
+  out=_loopyCPU(self,test,lpt,refimg);
   //return Py_BuildValue("");
   return out;
 }

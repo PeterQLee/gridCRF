@@ -30,16 +30,26 @@ typedef struct{
   i32 x,y;
 }om_pair;
 
-static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y);
-static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X);
+typedef struct{
+  i32 epochs;
+  f32 alpha;
+}train_params_t;
 
-static PyObject* fit (gridCRF_t * self, PyObject *args);
-static PyObject* predict(gridCRF_t *self, PyObject *args);
+typedef struct{
+  i32 max_its;
+  f32 stop_thresh;
+
+}loopy_params_t;
+static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt);
+static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t lpt,PyArrayObject *refimg);
+
+static PyObject* fit (gridCRF_t * self, PyObject *args, PyObject *kws);
+static PyObject* predict(gridCRF_t *self, PyObject *args, PyObject *kws);
 
 static PyMethodDef  gridCRF_methods[]={
-  {"fit",(PyCFunction)fit,METH_VARARGS,"Fit model"},
-  {"predict",(PyCFunction)predict,METH_VARARGS,"Predict given a trained model"},
-  {NULL}
+  {"fit",(PyCFunction)fit,METH_VARARGS|METH_KEYWORDS,"Fit model"},
+  {"predict",(PyCFunction)predict,METH_VARARGS|METH_KEYWORDS,"Predict given a trained model"},
+  {NULL,NULL,0,NULL}
 };
 
 static PyMemberDef gridCRF_members[]={
