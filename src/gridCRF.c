@@ -110,6 +110,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
       //printf("ij %d %d\n",i,j);
       
 	tmp=(f64*)PyArray_GETPTR3(X,i,j,0);
+	f32 vcum_0=0.0, vcum_1=0.0;
+	f32 normfact=alpha/1000.0;
 	for (n=0;n<n_factors;n++) {
 	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
 	  //if (b==0 && a==n) break; //TODO: change to proper ordering(like in notes0
@@ -119,6 +121,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	  //TODO: Improve with SSE
 	  yv[0]+= v[0]*((f32*)tmp)[0];
 	  yv[1]+= v[1]*((f32*)tmp)[1];
+	  vcum_0+=2*normfact*(v[0]);
+	  vcum_0+=2*normfact*(v[1]);
 	}
     
 	//softmax
@@ -135,10 +139,10 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	//TODO: speed up with SSE ops
 	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
 	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	change[0] = alpha * (((*l)&1)-yv[0]) * (*p);
+	change[0] = alpha * (((*l)&1)-yv[0]) * (*p) ;
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
 	p=(f32*)PyArray_GETPTR3(X,i,j,1);
-	change[1] = alpha * (((*l)&1)-yv[1]) * (*p);
+	change[1] = alpha * (((*l)&1)-yv[1]) * (*p); 
       
 	//update all of the pointers we visited with change.
 	//TODO: speed up with SSE, multithreading, or GPU impl.
@@ -583,14 +587,6 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   f=PyList_GetItem(lab,0);
   if (!PyArray_Check(f) || PyArray_NDIM(f) !=3 || PyArray_DIMS(f)[2] !=2) return NULL;
   
-  if (PyArray_TYPE(train) != NPY_FLOAT32) {
-    PyErr_SetString(PyExc_TypeError, "Training image must be 32-bit floats");
-    return NULL;
-  }
-  if (PyArray_TYPE(test) != NPY_UINT32) {
-    PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
-    return NULL;
-  }
   //TODO: check num elements of f is the same
   //TODO: Also need to ensure that Y is integer and X is f32
   
@@ -604,6 +600,20 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
     //TODO: check to ensure that each element in train and lab match dimensions
     X=PyList_GetItem(train,i);
     Y=PyList_GetItem(lab,i);
+    if (PyArray_TYPE(X) != NPY_FLOAT32) {
+      PyErr_SetString(PyExc_TypeError, "Training image must be 32-bit floats");
+      return NULL;
+    }
+    if (PyArray_TYPE(Y) != NPY_UINT32) {
+      PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
+      return NULL;
+    }
+  }
+  
+  for (i=0;i<n;i++) {
+    X=PyList_GetItem(train,i);
+    Y=PyList_GetItem(lab,i);
+
     _train(self,(PyArrayObject*)X,(PyArrayObject*)Y,tpt);
   }
   return Py_BuildValue("");  
