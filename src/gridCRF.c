@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 f32 ALPHA=0.001;
+
 static void gridCRF_dealloc(gridCRF_t *self) {
   printf("Dealloc\n");
   //if (self->V_data != NULL)
@@ -33,13 +34,15 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
     n_factors= n_factors + i*4;
   }
   self->n_factors= n_factors;
-  self->V_data = _mm_malloc((n_factors * 4 ) * sizeof(f32),32); //TODO: use aligned malloc
-  
-  for (i=0;i<n_factors*4;i++) {
-    self->V_data[i]=1.0f; //temporary
+  self->V_data = _mm_malloc((n_factors*2 * 4 ) * sizeof(f32),32); //TODO: use aligned malloc
+  self->unary = malloc(sizeof(f32)*2);
+  self->unary[0]=0.0f;
+  self->unary[1]=0.0f;
+  for (i=0;i<n_factors*4*2;i++) {
+    self->V_data[i]=0.0f; //temporary
   }
   
-  npy_intp dims[2]= {n_factors, 4};
+  npy_intp dims[2]= {n_factors*2, 4};
   self->V=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims,NPY_FLOAT32,self->V_data);
   Py_INCREF(self->V);
 
@@ -64,7 +67,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   i32 *l;
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
-  f32 *V_change = _mm_malloc(sizeof(f32)*n_factors*4,32);
+  f32 *V_change = _mm_malloc(sizeof(f32)*n_factors*4*2,32);
   
   n=self->depth;
   //f64 *stack[self->n_factors ]; //TODO, preallocate this on heap.
@@ -75,10 +78,15 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   f32 max,den;
   i32 *ainc = malloc(sizeof(i32)*n_factors*2);
   i32 *binc = malloc(sizeof(i32)*n_factors*2);
-  f32 L;
+  f32 L=0.0;
   f32 alpha=tpt.alpha;
 
   __m256 r1,r2;
+  f32 *unary = self->unary;
+  f32 unary_change[2]={0.0f,0.0f};
+  i32 num_params=n_factors*4*2 +2;
+  i32 cur,last;
+  lbfgs_t *lbfgs = alloc_lbfgs(10, num_params);
   
   //printf("n_factors %d\n",n_factors);
   //Get the appropriate coordinate offsets
@@ -109,8 +117,10 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
     }
   }
   for (its=0;its<epochs;its++) {
-    memset(V_change, 0, sizeof(f32)*n_factors*4);
-    
+    L=0.0;
+    memset(V_change, 0, sizeof(f32)*n_factors*4*2);
+    unary_change[0]=0.0f;
+    unary_change[1]=0.0f;
     n=0;
     for (i=0;i<dims[0];i++) {
       for (j=0;j<dims[1];j++) {
@@ -121,8 +131,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
       
 	tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
 	//f32 Eng[2];
-	yv[0]=tmp[0];
-	yv[1]=tmp[1];
+	yv[0]=unary[0]*tmp[0];
+	yv[1]=unary[1]*tmp[1];
 	
 	for (n=0;n<n_factors;n++) {
 	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
@@ -142,45 +152,31 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	for (n=0;n<n_factors;n++) {
 	  if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
 	  l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
-	  v=&V[n*4 + ((*l)^1)]; 
+	  v=&V[n_factors*4 + n*4 + 2*((*l)^1)]; 
 	  yv[0] += v[0];
-	  yv[1] += v[2];
+	  yv[1] += v[1];
 	}
 	
-	max=yv[0]>yv[1]? yv[0]:yv[1];
+	max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
     
-	yv[0]=exp(yv[0]-max);
-	yv[1]=exp(yv[1]-max);
+	yv[0]=exp(-yv[0]-max);
+	yv[1]=exp(-yv[1]-max);
 	den=1/(yv[0]+yv[1]);
 	yv[0]=yv[0]*den;
 	yv[1]=yv[1]*den;
 
 	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
 	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	change[0] = alpha * (((*l)&1)-yv[0]) ;
-	p=(f32*)PyArray_GETPTR3(X,i,j,1);
-	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
-	change[1] = alpha * (((*l)&1)-yv[1]) ;
+	L-= (*l) * log(yv[0]) /dims[0]/dims[1];
+	change[0] = -alpha * (((*l)&1)-yv[0]) ;
+	unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
 	
-
-	/*
-	max=yv[0]>yv[1]? yv[0]:yv[1];
-    
-	yv[0]=exp(yv[0]-max);
-	yv[1]=exp(yv[1]-max);
-	den=1/(yv[0]+yv[1]);
-      
-	//TODO: speed up with SSE ops
-	yv[0]=yv[0]*den;
-	yv[1]=yv[1]*den;
-      
-	//TODO: speed up with SSE ops
-	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
-	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	change[0] = alpha * (((*l)&1)-yv[0]) * exp(-(*p)) ;
-	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
 	p=(f32*)PyArray_GETPTR3(X,i,j,1);
-	change[1] = alpha * (((*l)&1)-yv[1]) * exp(-(*p)); */
+	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
+	L-= (*l)* log(yv[1])/dims[0]/dims[1];
+	change[1] = -alpha * (((*l)&1)-yv[1]);
+	unary_change[1] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+
 	for (n=0;n<n_factors;n++){
 	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
 	  //TODO: speed up (SSE) __m128 _mm_add_ps
@@ -189,11 +185,12 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	  V[n*4 + 2*((*l)^1)] += change[0];
 	  V[n*4 + 2*((*l)^1) + 1] += change[1];
 	  */
-	  /*if ((*l)^1) {
-	  V_change[n*4 + 2*((*l)^1)] += 4*change[0];
-	  V_change[n*4 + 2*((*l)^1) + 1] += 4*change[1];
+	  /*
+	  if ((*l)^1) {
+	    //V_change[n*4 + 2*((*l)^1)] += change[0];
+	    //V_change[n*4 + 2*((*l)^1) + 1] += 40*change[1];
 
-	  }*/
+	    }*/
 	  V_change[n*4 + 2*((*l)^1)] += change[0];
 	  V_change[n*4 + 2*((*l)^1) + 1] += change[1];
 
@@ -207,23 +204,96 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	    V_change[n*4 + ((*l)^1) + 2] += 4*change[1];
 
 	    }*/
-
-	  V_change[n*4 + ((*l)^1)] += change[0];
-	  V_change[n*4 + ((*l)^1) + 2] += change[1];
+	  /*
+	  if ((*l)^1) {
+	    V_change[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
+	  V_change[n_factors*4 +n*4 + 2*((*l)^1) + 1] += 40*change[1];
+	  
+	  }*/
+	  V_change[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
+	  V_change[n_factors*4 +n*4 + 2*((*l)^1) + 1] += change[1];
 	  
 	}
+
+
       }
     }
-    for (n=0;n<n_factors*4;n+=8) {
-      printf("n %d %f %f %f %f %f %f %f %f\n", n, V_change[n],V_change[n+1],V_change[n+2],V_change[n+3],V_change[n+4],V_change[n+5],V_change[n+6],V_change[n+7]);
-      r1=_mm256_load_ps(&V_change[n]);
-      r2=_mm256_load_ps(&V[n]);
-      r1=_mm256_add_ps(r1,r2);
-      _mm256_store_ps(&V[n],r1);
+    printf("Cross entropy %f\n",L);
+    if (lbfgs->cur !=0 ){
+      if (lbfgs->cur < lbfgs->m) { //This doesn't work if cur=0
+	//
+	memcpy(V_change,&(lbfgs->g[num_params*lbfgs->cur]),n_factors*4*2);
+	lbfgs->g[num_params*lbfgs->cur+n_factors*4*2]=unary_change[0];
+	lbfgs->g[num_params*lbfgs->cur+n_factors*4*2+1]=unary_change[1];
+	lbfgs->p[lbfgs->cur]=0.0;
+	for (n=0;n<num_params;n++) {
+	  lbfgs->y[num_params*(lbfgs->cur-1) +n] = lbfgs->g[num_params*lbfgs->cur+n] - lbfgs->g[num_params*(lbfgs->cur-1)+n];
+	  lbfgs->s[num_params*(lbfgs->cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
+	  lbfgs->p[lbfgs->cur] += lbfgs->y[num_params*(lbfgs->cur-1) +n] * lbfgs->s[num_params*(lbfgs->cur-1) +n];
+	}
+	lbfgs->p[lbfgs->cur]=1/(lbfgs->p[lbfgs->cur]);
+	lbfgs->cur++;
+      }
+      else{
+	cur=(lbfgs->start + lbfgs->m) %(lbfgs->m+1);
+	last=(lbfgs->start + lbfgs->m-1) %(lbfgs->m+1);
+	memcpy(V_change,&(lbfgs->g[num_params*cur]),n_factors*4*2);
+	lbfgs->g[num_params*cur+n_factors*4*2]=unary_change[0];
+	lbfgs->g[num_params*cur+n_factors*4*2+1]=unary_change[1];
+	lbfgs->p[cur]=0.0;
+	for (n=0;n<num_params;n++) {
+	  lbfgs->y[num_params*(last) +n] = lbfgs->g[num_params*cur+n] - lbfgs->g[num_params*(last)+n];
+	  lbfgs->s[num_params*(last) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
+	  lbfgs->p[cur] += lbfgs->y[num_params*(last) +n] * lbfgs->s[num_params*(last) +n];
+	}
+	lbfgs->p[cur]=1/(lbfgs->p[cur]);
+	lbfgs->start++;
+
+
+      }
       
+      //Warning lastlast_change will be overwritten in next move
+      tmp=lbfgs->l_change;
+      lbfgs->l_change= lbfgs->ll_change;
+      lbfgs->ll_change=tmp;
+      LBFGS(lbfgs);
+      
+      for (n=0;n<n_factors*4*2;n++) {
+	V[n] += lbfgs->l_change[n];
+      }
+      unary[0]+=lbfgs->l_change[n_factors*4*2];
+      unary[1]+=lbfgs->l_change[n_factors*4*2+1];
     }
-  }
+
+    else{
+      memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+      lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
+      lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
+	
+      memcpy(&(lbfgs->s[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+      lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
+      lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
+	
+      memcpy(&(lbfgs->y[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+      lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
+      lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
+      lbfgs->cur++;
+      
+      for (n=0;n<n_factors*4*2;n+=8) {
+	printf("n %d %f %f %f %f %f %f %f %f\n", n, V_change[n],V_change[n+1],V_change[n+2],V_change[n+3],V_change[n+4],V_change[n+5],V_change[n+6],V_change[n+7]);
+	r1=_mm256_load_ps(&V_change[n]);
+	r2=_mm256_load_ps(&V[n]);
+	r1=_mm256_add_ps(r1,r2);
+	_mm256_store_ps(&V[n],r1);
+	
+      }
+      unary[0] += unary_change[0];
+      unary[1] += unary_change[1];
     
+    }
+    
+  }
+  printf("unary %f %f \n",unary[0],unary[1]);
   //Values trained now
   printf("Done train");
   free(ainc);
@@ -245,6 +315,9 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
   i32 converged=0;
   
   f32 * V_data=self->V_data;
+  f32 * unary= self->unary;
+  f32 tmp[2];
+  
   npy_intp x,y;
   i64 m,n,depth=self->depth,i,j,co;
   i32 l,ll;
@@ -342,6 +415,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
   //Exponentiate and temporarily store in RE
   for (i=0;i<2*n_factors*2;i+=8) {
     r1=_mm256_load_ps(&V_data[i]);
+    r2=_mm256_load_ps(&V_data[i + n_factors*4]);
     //r1=exp256_ps(r1);
     //assert (!(isnan(r1[6]) || isnan(r1[7])));
     RE[i/2]=-r1[0];
@@ -353,17 +427,18 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
     RE[n_factors*2+i/2+2]=-r1[6];
     RE[n_factors*2+i/2+3]=-r1[7];
 
-
-    CE[i/2]=-r1[0];
-    CE[i/2+1]=-r1[1];
-    CE[n_factors*2+i/2]=-r1[2];
-    CE[n_factors*2+i/2+1]=-r1[3];
-    CE[i/2+2]=-r1[4];
-    CE[i/2+3]=-r1[5];
-    CE[n_factors*2+i/2+2]=-r1[6];
-    CE[n_factors*2+i/2+3]=-r1[7];
-
-    /*CE[i/2]=-r1[0];//New
+    
+    CE[i/2]=-r2[0];
+    CE[i/2+1]=-r2[1];
+    CE[n_factors*2+i/2]=-r2[2];
+    CE[n_factors*2+i/2+1]=-r2[3];
+    CE[i/2+2]=-r2[4];
+    CE[i/2+3]=-r2[5];
+    CE[n_factors*2+i/2+2]=-r2[6];
+    CE[n_factors*2+i/2+3]=-r2[7];
+    
+    /*
+    CE[i/2]=-r1[0];//New
     CE[i/2+1]=-r1[2];
     CE[n_factors*2+i/2]=-r1[1];
     CE[n_factors*2+i/2+1]=-r1[3];
@@ -538,7 +613,11 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
 	//variable to factor messages
 	//f64 base=Fx_Y[x,y];
 	f64 base= *((f64*)PyArray_GETPTR3(X,x,y,0));
-	r1=(__m256)_mm256_set1_pd(base); //set all elements in vector this thi
+	*((f64*)tmp) = base;
+	tmp[0]=-tmp[0]*unary[0];
+	tmp[1]=-tmp[1]*unary[1];
+	//r1=(__m256)_mm256_set1_pd(base); //set all elements in vector this thi
+	r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
 	//Warning: possible segfault
 	
 	for (n=0;n<n_factors*2;n+=4) {

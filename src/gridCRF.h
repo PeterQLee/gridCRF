@@ -8,6 +8,7 @@
 #include <math.h>
 #include "immintrin.h"
 #include "avx_mathfun.h"
+#include "optimize.h"
 
 #define COORD4(dir,x,y,f,p,X,Y,NF) (dir*X*Y*NF*2 + x*Y*NF*2 + y*NF*2 + f*2 + p)
 #define COORD3(x,y,n, X,Y,NF,O ) (x*Y*NF*O + y*NF*O + n*O)
@@ -23,6 +24,7 @@ typedef struct{
   i64 depth;
   PyArrayObject *V;
   f32 *V_data;
+  f32 *unary;
   //i32 *com, *rom;
 }gridCRF_t;
 
