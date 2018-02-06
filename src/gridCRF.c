@@ -218,26 +218,36 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 
       }
     }
+    printf("Start %d %d %d\n",lbfgs->start, lbfgs->cur, lbfgs->m);
     printf("Cross entropy %f\n",L);
     if (lbfgs->cur !=0 ){
       if (lbfgs->cur < lbfgs->m) { //This doesn't work if cur=0
 	//
-	memcpy(V_change,&(lbfgs->g[num_params*lbfgs->cur]),n_factors*4*2);
-	lbfgs->g[num_params*lbfgs->cur+n_factors*4*2]=unary_change[0];
-	lbfgs->g[num_params*lbfgs->cur+n_factors*4*2+1]=unary_change[1];
+	//memcpy(V_change,&(lbfgs->g[num_params*lbfgs->cur]),n_factors*4*2*sizeof(f32));
+	for (n=0;n<n_factors*4*2;n++) {
+	  lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
+	}
+	lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
+	lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
 	lbfgs->p[lbfgs->cur]=0.0;
 	for (n=0;n<num_params;n++) {
 	  lbfgs->y[num_params*(lbfgs->cur-1) +n] = lbfgs->g[num_params*lbfgs->cur+n] - lbfgs->g[num_params*(lbfgs->cur-1)+n];
 	  lbfgs->s[num_params*(lbfgs->cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
+	  printf("g1 g0 %f %f %d\n", lbfgs->g[num_params*lbfgs->cur+n] , lbfgs->g[num_params*(lbfgs->cur-1)+n],num_params*(lbfgs->cur-1)+n);
+	  printf("y s %f %f\n", lbfgs->y[num_params*(lbfgs->cur-1) +n], lbfgs->s[num_params*(lbfgs->cur-1) +n]);
 	  lbfgs->p[lbfgs->cur] += lbfgs->y[num_params*(lbfgs->cur-1) +n] * lbfgs->s[num_params*(lbfgs->cur-1) +n];
 	}
 	lbfgs->p[lbfgs->cur]=1/(lbfgs->p[lbfgs->cur]);
+	printf("p %f\n",lbfgs->p[cur]);
 	lbfgs->cur++;
       }
       else{
-	cur=(lbfgs->start + lbfgs->m) %(lbfgs->m+1);
+	cur=(lbfgs->start) %(lbfgs->m+1);
 	last=(lbfgs->start + lbfgs->m-1) %(lbfgs->m+1);
-	memcpy(V_change,&(lbfgs->g[num_params*cur]),n_factors*4*2);
+	for (n=0;n<n_factors*4*2;n++) {
+	  lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
+	}
+	//memcpy(V_change,&(lbfgs->g[num_params*cur]),n_factors*4*2*(sizeof(f32)));
 	lbfgs->g[num_params*cur+n_factors*4*2]=unary_change[0];
 	lbfgs->g[num_params*cur+n_factors*4*2+1]=unary_change[1];
 	lbfgs->p[cur]=0.0;
@@ -246,8 +256,9 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	  lbfgs->s[num_params*(last) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
 	  lbfgs->p[cur] += lbfgs->y[num_params*(last) +n] * lbfgs->s[num_params*(last) +n];
 	}
+	printf("p %f\n",lbfgs->p[cur]);
 	lbfgs->p[cur]=1/(lbfgs->p[cur]);
-	lbfgs->start++;
+	lbfgs->start= (lbfgs->start+1)%(lbfgs->m + 1);
 
 
       }
@@ -257,28 +268,57 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
       lbfgs->l_change= lbfgs->ll_change;
       lbfgs->ll_change=tmp;
       LBFGS(lbfgs);
-      
+      printf("CHHHANGE ");
       for (n=0;n<n_factors*4*2;n++) {
 	V[n] += lbfgs->l_change[n];
+	printf("%f ",lbfgs->l_change[n]);
       }
+      printf("\n");
       unary[0]+=lbfgs->l_change[n_factors*4*2];
       unary[1]+=lbfgs->l_change[n_factors*4*2+1];
     }
 
     else{
-      memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+      for (n=0;n<n_factors*4*2;n++) {
+	lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
+	printf("og %f %d\n",lbfgs->g[num_params*lbfgs->cur+n],num_params*lbfgs->cur+n);
+	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
+      }
       lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
       lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-	
-      memcpy(&(lbfgs->s[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+
+      for (n=0;n<n_factors*4*2;n++) {
+	lbfgs->s[num_params*lbfgs->cur+n]=V_change[n];
+	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
+      }
+      //memcpy(&(lbfgs->s[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
       lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
       lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-	
-      memcpy(&(lbfgs->y[num_params*lbfgs->cur]),V_change,n_factors*4*2);
+      for (n=0;n<n_factors*4*2;n++) {
+	lbfgs->y[num_params*lbfgs->cur+n]=V_change[n];
+	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
+      }
+      //memcpy(&(lbfgs->y[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
       lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
       lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
+
+      for (n=0;n<n_factors*4*2;n++) {
+	lbfgs->l_change[n]=V_change[n];
+	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
+      }
+      //memcpy((lbfgs->l_change),V_change,n_factors*4*2*sizeof(f32));
+      lbfgs->l_change[n_factors*4*2]=unary_change[0];
+      lbfgs->l_change[n_factors*4*2+1]=unary_change[1];
+      lbfgs->p[0]=0.0f;
+      for (n=0;n<n_factors*4*2;n++) {
+	lbfgs->p[0] += lbfgs->y[num_params*lbfgs->cur+n] * lbfgs->s[num_params*lbfgs->cur+n];
+      }
+      printf("AP %f\n",lbfgs->p[0]);
+      lbfgs->p[0]=1/(lbfgs->p[0]);
+
+      memset((lbfgs->ll_change),0,sizeof(f32)*num_params);
       lbfgs->cur++;
-      
+
       for (n=0;n<n_factors*4*2;n+=8) {
 	printf("n %d %f %f %f %f %f %f %f %f\n", n, V_change[n],V_change[n+1],V_change[n+2],V_change[n+3],V_change[n+4],V_change[n+5],V_change[n+6],V_change[n+7]);
 	r1=_mm256_load_ps(&V_change[n]);

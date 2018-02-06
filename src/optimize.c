@@ -29,6 +29,7 @@ f32* LBFGS(lbfgs_t *params) {
   f32 Beta;
   i32 i,j,end,start=params->start;
   f32 den,num;
+  printf("A\n");
   if (params->cur == params->m) {
     end=start+m;
   }
@@ -38,37 +39,61 @@ f32* LBFGS(lbfgs_t *params) {
   f32 *q=&(params->g[end%(m+1)]); // Gradients
   for (i=0;i<num_params;i++) {
     q[i]=params->g[((end-1)%(m+1))*num_params + i];
+    printf("q %f ",q[i]);
   }
-	 
-  for (i=(end-1)%(m+1);i!=start-1;i=(i-1)%(m+1)) {
+  printf("\n");
+  printf("Aa %d %d %d %d END %d\n",(end-1)%(m+1), (start-1)%(m+1), (0-1)%(m+1), -1%(m+1),end);
+  for (i=end-2>=0?end-2:end-2+m+1;i!=start-1;i--) {
+    if (i<0) {
+      i=i+(m+1);
+      printf("HAHA\n");
+    }
     //backwards through time
     //p=1/sum(y[i]*s[i]);
+    //printf("I %d\n",i);
     f32 stot=0;
+    printf("s");
     for (j=0;j<num_params;j++) {
-      stot += s[i*num_params+j] * q[i*num_params+j];
+      stot += s[i*num_params+j] * q[j];
+      printf("%f ",stot);
     }
+    printf(" \n");
     stot*=p[i];
+    printf("P %f\n",p[i]);
     //alpha[i]= p[i] * s[i](transpose) * q;
     alpha[i]=stot;//p[i] * stot;
+    printf("Q %d\n",i);
     for (j=0;j<num_params;j++) {
       q[j]=q[j]-alpha[i]*y[i*num_params+j];
+      printf("%f ",q[j]);
     }
+    printf("\ny");
+    for (j=0;j<num_params;j++) {
+      printf("%f\n",y[i*num_params+j]);
+    }
+    printf("\n");
   }
+  printf("B\n");
   den=0;
   for (j=0;j<num_params;j++){
     den+=y[(start)*num_params+j]*y[(start)*num_params+j];
   }
+
   num=0;
   for (j=0;j<num_params;j++){
     num+=s[(start)*num_params+j] * q[j];
   }
+  printf("NUM DEN %f %f\n Z\n",num,den);
+  
   for (j=0;j<num_params;j++){
     z[j]=y[(start)*num_params+j]*num/den;
+    printf("%f ",z[j]);
   }
+  printf("\n");
   //H = y[start] * s[start] (transpose)/ y[start](transpose)y[start];
   //z=H*q;
-  
-  for (i=start;i!=(end)%(m+1);i=(i+1)%(m+1)) {
+  printf("C\n");
+  for (i=start;i!=(end-1)%(m+1);i=(i+1)%(m+1)) {
     Beta=0;
     for (j=0;j<num_params;j++) {
       Beta+= y[i*num_params+j] * z[j];
@@ -78,6 +103,7 @@ f32* LBFGS(lbfgs_t *params) {
       z[j]= z[j] + s[i*num_params+j]*(alpha[i]-Beta);
     }
   }
+  printf("D\n");
   free(alpha);
   return z;
 }
