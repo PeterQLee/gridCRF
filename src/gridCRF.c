@@ -1,7 +1,17 @@
 #include "gridCRF.h"
 #include <assert.h>
 #include <stdio.h>
+#include <lbfgs.h>
+
 f32 ALPHA=0.001;
+
+//m, epsilon, past, dleta, max_iterations, linesearch, max_linesearch, min_step, max_step,ftol,wolfe. gtol,xtp;.prtjamtwose+c,orthantwise_start, orthantwise_end
+static const lbfgs_parameter_t _defparam = {
+  6, 1e-5, 0, 1e-5,
+  15, LBFGS_LINESEARCH_DEFAULT, 40,
+  1e-20, 1e20, 1e-4, 0.9, 0.9, 1.0e-16,
+  0.0, 0, -1,
+};
 
 static void gridCRF_dealloc(gridCRF_t *self) {
   printf("Dealloc\n");
@@ -56,8 +66,169 @@ static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwd
   return (PyObject *)self;
 }
 
+static int progress ( void * instance,
+		      const lbfgsfloatval_t *x,
+		      const lbfgsfloatval_t *g,
+		      const lbfgsfloatval_t fx,
+		      const lbfgsfloatval_t xnorm,
+		      const lbfgsfloatval_t gnorm,
+		      const lbfgsfloatval_t step,
+		      int n,
+		      int k,
+		      int ls){
+  return 0;
+}
 //backend functions
+static lbfgsfloatval_t _lbfgs_update(void *arg, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step){
+  gradient_t *args=(gradient_t *) arg;
+  int i;
+  gridCRF_t *self=args->self;
+  printf("Post self %x %x\n",self,arg);
+  f32 *unary=(args->self)->unary;
+  f32 *V=(args->self)->V_data;
 
+  i32 num_params= args->num_params;
+  i32 n_factors=args->n_factors;
+  f32 *V_change=args->V_change;
+  
+  //for (i=0;i<n_factors*4*2;i++){
+  //  V[i]+=0.1*x[i];
+  //}
+  unary[0]+=0.01*x[n_factors*4*2];
+  unary[1]+=0.01*x[n_factors*4*2+1];
+  unary[0]=-1;
+  unary[1]=-1;
+  f32 L=_calculate_gradient(args);
+  for (i=0;i<num_params;i++) {
+    g[i]=V_change[i]; //this works because V_change and unary change are contitigous
+  }
+  printf("Error %f\n",L);
+  return L;
+}
+
+static f32 _calculate_gradient(gradient_t *args) {
+  i32 i,j;
+  PyArrayObject *X=args->X;
+  PyArrayObject *Y=args->Y;
+  printf("Y %x\n",Y);
+  f32 *unary= args->self->unary;
+  i32 *ainc=args->ainc, *binc=args->binc;
+  f32 * V=args->self->V_data;
+  
+  f32 *V_change = args->V_change;
+  f32 *unary_change = args->unary_change;
+  f32 L=0.0f,max=0.0f,den,*p;
+  f32 yv [2];
+  f32 change[2];
+  f32 *v;
+  i32 *l;
+  npy_intp *dims=args->dims;
+  i32 n_factors = args->n_factors;
+  
+  memset(V_change, 0, sizeof(f32)*n_factors*4*2);
+  unary_change[0]=0.0f;
+  unary_change[1]=0.0f;
+  i32 n=0;
+  f32 *tmp;
+  f32 alpha=args->alpha;
+  printf("dims %d %d\n",dims[0],dims[1]);
+  for (i=0;i<dims[0];i++) {
+    for (j=0;j<dims[1];j++) {
+      *((f64 *)yv)=0.0; // set outome to 0
+      
+      if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
+      //do traversal.
+      //printf("ij %d %d\n",i,j);
+      
+      tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
+      //f32 Eng[2];
+      //yv[0]=tmp[0];
+      //yv[1]=tmp[1];
+      yv[0]=unary[0]*tmp[0];
+      yv[1]=unary[1]*tmp[1];
+	
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
+	//if (b==0 && a==n) break; //TODO: change to proper ordering(like in notes0
+	  
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0);
+	v=&V[n*4 + ((*l)^1)*2]; // 4x4 transfer matrix for n	
+	//We pick the row that corresponds to the outcome
+	//TODO: Improve with SSE
+	//yv[0]+=v[0]*tmp[0];
+	//yv[1]+=v[1]*tmp[1];
+	  
+	yv[0] += v[0]; //(Dependent on function)
+	yv[1] += v[1];
+      }
+      //do left to right
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
+	v=&V[n_factors*4 + n*4 + 2*((*l)^1)]; 
+	yv[0] += v[0];
+	yv[1] += v[1];
+      }
+      //printf("%f %f\n",yv[0],yv[1]);
+      //yv[0]*=0.2;
+      //yv[1]*=0.8;
+      max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
+    
+      yv[0]=exp(-yv[0]-max);
+      yv[1]=exp(-yv[1]-max);
+      den=1/(yv[0]+yv[1]);
+      yv[0]=yv[0]*den;
+      yv[1]=yv[1]*den;
+
+      l=((i32*)PyArray_GETPTR3(Y,i,j,0));
+      p=(f32*)PyArray_GETPTR3(X,i,j,0);
+      //L-= (*l) * log(yv[0]) /dims[0]/dims[1];
+      if (*l) {
+	if (isinf(yv[0])) {
+	  printf("INF yv0\n");
+	}
+	L-=  log(yv[0]) /dims[0]/dims[1];
+      }
+      change[0] = -alpha * (((*l)&1)-yv[0]) ;
+      unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
+	
+      p=(f32*)PyArray_GETPTR3(X,i,j,1);
+      l=((i32*)PyArray_GETPTR3(Y,i,j,1));
+      
+      //L-= (*l)* log(yv[1])/dims[0]/dims[1];
+      if (*l) {
+	if (isinf(yv[1])) {
+	  printf("INF yv1 %f\n",yv[1]);
+	}
+
+	L-= log(yv[1])/dims[0]/dims[1];
+      }
+      change[1] = -alpha * (((*l)&1)-yv[1]);
+      unary_change[1] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+      //printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
+      if (isinf(L)){
+	exit(1);
+      }
+
+      for (n=0;n<n_factors;n++){
+	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
+	//TODO: speed up (SSE) __m128 _mm_add_ps
+	l=((i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0));
+	V_change[n*4 + 2*((*l)^1)] += change[0];
+	V_change[n*4 + 2*((*l)^1) + 1] += change[1];
+      }
+      
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
+	V_change[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
+	V_change[n_factors*4 +n*4 + 2*((*l)^1) + 1] += change[1];	  
+      }
+    }
+  }
+  printf("L %f\n",L);
+  return L;
+}
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt){
  
   npy_intp * dims= PyArray_DIMS(X);
@@ -67,7 +238,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   i32 *l;
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
-  f32 *V_change = _mm_malloc(sizeof(f32)*n_factors*4*2,32);
+  f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+2),32);
   
   n=self->depth;
   //f64 *stack[self->n_factors ]; //TODO, preallocate this on heap.
@@ -83,10 +254,10 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 
   __m256 r1,r2;
   f32 *unary = self->unary;
-  f32 unary_change[2]={0.0f,0.0f};
+  //f32 unary_change[2]={0.0f,0.0f};
+  f32 *unary_change  = &V_change[n_factors*4*2];
   i32 num_params=n_factors*4*2 +2;
   i32 cur,last;
-  lbfgs_t *lbfgs = alloc_lbfgs(10, num_params);
   
   //printf("n_factors %d\n",n_factors);
   //Get the appropriate coordinate offsets
@@ -116,129 +287,68 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 
     }
   }
+  //calculate initial gradient to get things going
+  gradient_t gradargs;
+  printf("PRE Y %x\n",Y);
+  gradargs.X=X;
+  gradargs.Y=Y;
+  gradargs.V_change=V_change;
+  gradargs.self=self;
+  gradargs.ainc=ainc;
+  gradargs.binc=binc;
+  gradargs.unary_change=unary_change;
+  gradargs.dims=dims;
+  gradargs.num_params=num_params;
+  gradargs.n_factors=n_factors;
+  gradargs.alpha=alpha;
+  _calculate_gradient(&gradargs);
+
+  printf("PREDIM %d %d\n",dims[0],dims[1]);
+  printf("Pre self %x %x\n",gradargs.self,&gradargs);
+
+  lbfgsfloatval_t *x=lbfgs_malloc(num_params); //TODO: remember to free
+
+  for (i=0;i<n_factors*4*2;i++) {
+    x[i]=V_change[i];
+  }
+  x[n_factors*4*2]=unary_change[0];
+  x[n_factors*4*2+1]=unary_change[1];
+  //lbfgs_parameter_t lbfgs_param;
+  printf("PPre self %x %x\n",gradargs.self,&gradargs);
+  //lbfgs_parameter_init(&lbfgs_param);
+
+  f32 fx;
+  i32 ret= lbfgs(num_params,x,&fx, _lbfgs_update, NULL, (void *)&gradargs, &_defparam);
+  printf("orth %d %d\n",_defparam.orthantwise_start,epochs); //Invalid orthantwise_start
+  printf("ret %d %d\n",ret,LBFGSERR_INVALID_ORTHANTWISE_START); //Invalid orthantwise_start
+  
+  
+  #if 0
   for (its=0;its<epochs;its++) {
-    L=0.0;
-    memset(V_change, 0, sizeof(f32)*n_factors*4*2);
-    unary_change[0]=0.0f;
-    unary_change[1]=0.0f;
-    n=0;
-    for (i=0;i<dims[0];i++) {
-      for (j=0;j<dims[1];j++) {
-	*((f64 *)yv)=0.0; // set outome to 0
-	if (((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && ((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
-      //do traversal.
-      //printf("ij %d %d\n",i,j);
-      
-	tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-	//f32 Eng[2];
-	yv[0]=unary[0]*tmp[0];
-	yv[1]=unary[1]*tmp[1];
-	
-	for (n=0;n<n_factors;n++) {
-	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
-	  //if (b==0 && a==n) break; //TODO: change to proper ordering(like in notes0
-	  
-	  l=(i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0);
-	  v=&V[n*4 + ((*l)^1)*2]; // 4x4 transfer matrix for n	
-	  //We pick the row that corresponds to the outcome
-	  //TODO: Improve with SSE
-	  //yv[0]+=v[0]*tmp[0];
-	  //yv[1]+=v[1]*tmp[1];
-	  
-	  yv[0] += v[0]; //(Dependent on function)
-	  yv[1] += v[1];
-	}
-	//do left to right
-	for (n=0;n<n_factors;n++) {
-	  if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
-	  l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
-	  v=&V[n_factors*4 + n*4 + 2*((*l)^1)]; 
-	  yv[0] += v[0];
-	  yv[1] += v[1];
-	}
-	
-	max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
-    
-	yv[0]=exp(-yv[0]-max);
-	yv[1]=exp(-yv[1]-max);
-	den=1/(yv[0]+yv[1]);
-	yv[0]=yv[0]*den;
-	yv[1]=yv[1]*den;
-
-	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
-	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	L-= (*l) * log(yv[0]) /dims[0]/dims[1];
-	change[0] = -alpha * (((*l)&1)-yv[0]) ;
-	unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
-	
-	p=(f32*)PyArray_GETPTR3(X,i,j,1);
-	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
-	L-= (*l)* log(yv[1])/dims[0]/dims[1];
-	change[1] = -alpha * (((*l)&1)-yv[1]);
-	unary_change[1] += -alpha*(((*l)&1)-yv[1])*tmp[1];
-
-	for (n=0;n<n_factors;n++){
-	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
-	  //TODO: speed up (SSE) __m128 _mm_add_ps
-	  l=((i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0));
-	  /*
-	  V[n*4 + 2*((*l)^1)] += change[0];
-	  V[n*4 + 2*((*l)^1) + 1] += change[1];
-	  */
-	  /*
-	  if ((*l)^1) {
-	    //V_change[n*4 + 2*((*l)^1)] += change[0];
-	    //V_change[n*4 + 2*((*l)^1) + 1] += 40*change[1];
-
-	    }*/
-	  V_change[n*4 + 2*((*l)^1)] += change[0];
-	  V_change[n*4 + 2*((*l)^1) + 1] += change[1];
-
-	}
-      
-      	for (n=0;n<n_factors;n++) {
-	  if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
-	  l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
-	  /*if ((*l)^1) {
-	    V_change[n*4 + ((*l)^1)] += 4*change[0];
-	    V_change[n*4 + ((*l)^1) + 2] += 4*change[1];
-
-	    }*/
-	  /*
-	  if ((*l)^1) {
-	    V_change[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
-	  V_change[n_factors*4 +n*4 + 2*((*l)^1) + 1] += 40*change[1];
-	  
-	  }*/
-	  V_change[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
-	  V_change[n_factors*4 +n*4 + 2*((*l)^1) + 1] += change[1];
-	  
-	}
-
-
-      }
-    }
+    lbfgs(
+  }
     printf("Start %d %d %d\n",lbfgs->start, lbfgs->cur, lbfgs->m);
     printf("Cross entropy %f\n",L);
     if (lbfgs->cur !=0 ){
       if (lbfgs->cur < lbfgs->m) { //This doesn't work if cur=0
 	//
 	//memcpy(V_change,&(lbfgs->g[num_params*lbfgs->cur]),n_factors*4*2*sizeof(f32));
+	cur=lbfgs->cur;
 	for (n=0;n<n_factors*4*2;n++) {
-	  lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
+	  lbfgs->g[num_params*cur+n]=V_change[n];
 	}
-	lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
-	lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-	lbfgs->p[lbfgs->cur]=0.0;
+	lbfgs->g[num_params*(cur)+n_factors*4*2]=unary_change[0];
+	lbfgs->g[num_params*(cur)+n_factors*4*2+1]=unary_change[1];
+	lbfgs->p[cur]=0.0;
 	for (n=0;n<num_params;n++) {
-	  lbfgs->y[num_params*(lbfgs->cur-1) +n] = lbfgs->g[num_params*lbfgs->cur+n] - lbfgs->g[num_params*(lbfgs->cur-1)+n];
-	  lbfgs->s[num_params*(lbfgs->cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
-	  printf("g1 g0 %f %f %d\n", lbfgs->g[num_params*lbfgs->cur+n] , lbfgs->g[num_params*(lbfgs->cur-1)+n],num_params*(lbfgs->cur-1)+n);
-	  printf("y s %f %f\n", lbfgs->y[num_params*(lbfgs->cur-1) +n], lbfgs->s[num_params*(lbfgs->cur-1) +n]);
-	  lbfgs->p[lbfgs->cur] += lbfgs->y[num_params*(lbfgs->cur-1) +n] * lbfgs->s[num_params*(lbfgs->cur-1) +n];
+	  lbfgs->y[num_params*(cur-1) +n] = lbfgs->g[num_params*cur+n] - lbfgs->g[num_params*(cur-1)+n];
+	  lbfgs->s[num_params*(cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
+	  printf("g1 g0 %f %f %d\n", lbfgs->g[num_params*cur+n] , lbfgs->g[num_params*(cur-1)+n],num_params*(cur-1)+n);
+	  printf("y s %f %f\n", lbfgs->y[num_params*(cur-1) +n], lbfgs->s[num_params*(cur-1) +n]);
+	  lbfgs->p[cur] += lbfgs->y[num_params*(cur-1) +n] * lbfgs->s[num_params*(cur-1) +n];
 	}
-	lbfgs->p[lbfgs->cur]=1/(lbfgs->p[lbfgs->cur]);
-	printf("p %f\n",lbfgs->p[cur]);
+	lbfgs->p[cur]=1/(lbfgs->p[cur]);
+	printf("p %f %d\n",lbfgs->p[cur],cur);
 	lbfgs->cur++;
       }
       else{
@@ -252,11 +362,11 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 	lbfgs->g[num_params*cur+n_factors*4*2+1]=unary_change[1];
 	lbfgs->p[cur]=0.0;
 	for (n=0;n<num_params;n++) {
-	  lbfgs->y[num_params*(last) +n] = lbfgs->g[num_params*cur+n] - lbfgs->g[num_params*(last)+n];
-	  lbfgs->s[num_params*(last) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
+	  lbfgs->y[num_params*(cur-1) +n] = lbfgs->g[num_params*last+n] - lbfgs->g[num_params*(last-1)+n];
+	  lbfgs->s[num_params*(cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
 	  lbfgs->p[cur] += lbfgs->y[num_params*(last) +n] * lbfgs->s[num_params*(last) +n];
 	}
-	printf("p %f\n",lbfgs->p[cur]);
+	printf("p %f %d\n",lbfgs->p[cur],lbfgs->cur);
 	lbfgs->p[cur]=1/(lbfgs->p[cur]);
 	lbfgs->start= (lbfgs->start+1)%(lbfgs->m + 1);
 
@@ -270,12 +380,12 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
       LBFGS(lbfgs);
       printf("CHHHANGE ");
       for (n=0;n<n_factors*4*2;n++) {
-	V[n] += lbfgs->l_change[n];
+	V[n] += alpha*lbfgs->l_change[n];
 	printf("%f ",lbfgs->l_change[n]);
       }
       printf("\n");
-      unary[0]+=lbfgs->l_change[n_factors*4*2];
-      unary[1]+=lbfgs->l_change[n_factors*4*2+1];
+      unary[0]+=alpha*lbfgs->l_change[n_factors*4*2];
+      unary[1]+=alpha*lbfgs->l_change[n_factors*4*2+1];
     }
 
     else{
@@ -332,7 +442,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
     
     }
     
-  }
+    }
+  #endif
   printf("unary %f %f \n",unary[0],unary[1]);
   //Values trained now
   printf("Done train");
@@ -458,6 +569,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
     r2=_mm256_load_ps(&V_data[i + n_factors*4]);
     //r1=exp256_ps(r1);
     //assert (!(isnan(r1[6]) || isnan(r1[7])));
+    
     RE[i/2]=-r1[0];
     RE[i/2+1]=-r1[1];
     RE[n_factors*2+i/2]=-r1[2];
@@ -466,7 +578,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
     RE[i/2+3]=-r1[5];
     RE[n_factors*2+i/2+2]=-r1[6];
     RE[n_factors*2+i/2+3]=-r1[7];
-
+    
     
     CE[i/2]=-r2[0];
     CE[i/2+1]=-r2[1];
@@ -487,8 +599,8 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
     CE[n_factors*2+i/2+2]=-r1[5];
     CE[n_factors*2+i/2+3]=-r1[7];*/
 
-    //printf("SET %ld %ld %ld %ld %ld %ld %ld %ld\n", i/2, i/2+1, i/2+n_factors*2, i/2+n_factors*2+1 , i/2+2, i/2+3 , i/2+2+n_factors*2,i/2+3+n_factors*2);
-
+    printf("SET %ld %ld %ld %ld %ld %ld %ld %ld\n", i/2, i/2+1, i/2+n_factors*2, i/2+n_factors*2+1 , i/2+2, i/2+3 , i/2+2+n_factors*2,i/2+3+n_factors*2);
+    printf("VAL %f %f %f %f %f %f %f %f\n", RE[i/2], RE[i/2+1], RE[i/2+n_factors*2], RE[i/2+n_factors*2+1] , RE[i/2+2], RE[i/2+3] , RE[i/2+2+n_factors*2],RE[i/2+3+n_factors*2]);
     /*mvtemp=((__m256d)r1)[0];
     *((f64*)&RE[i/2]) = mvtemp;
     mvtemp=((__m256d)r1)[1];
@@ -660,7 +772,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
 	r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
 	//Warning: possible segfault
 	
-	for (n=0;n<n_factors*2;n+=4) {
+	for (n=0;n<n_factors*2;n+=4) { //Set baseline, since we know that unary is added to each V_F
 	  _mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
 	}
       
@@ -712,8 +824,10 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
 
 	assert (origin < dims[0]*dims[1]*2);
 	//*((f64*)&marginals[origin])=0.0; /OPT
-	marginals[origin]=0.0f;
-	marginals[origin+1]=0.0f;
+	//marginals[origin]=0.0f;
+	//marginals[origin+1]=0.0f;
+	marginals[origin]=tmp[0];
+	marginals[origin+1]=tmp[1];
 	for (i=0;i<n_factors*2;i++) {
 
 	  assert(COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+ 1 < dims[0] * dims[1] * (n_factors*2) *2 && COORD3(x,y,n,dims[0],dims[1],2*n_factors,2) > 0);

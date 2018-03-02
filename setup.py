@@ -4,7 +4,10 @@ import numpy as np
 import os
 
 setup_kwargs={
-    'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-O0','-fno-inline']
+    'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
+    'libraries': ['lbfgs'],
+    'library_dirs':['/usr/local/lib'],
+
 }
 
 setup(name="BoardPy", version="1.0",

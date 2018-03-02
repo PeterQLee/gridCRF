@@ -59,7 +59,7 @@ f32* LBFGS(lbfgs_t *params) {
     }
     printf(" \n");
     stot*=p[i];
-    printf("P %f\n",p[i]);
+    printf("P %f %d\n",p[i],i);
     //alpha[i]= p[i] * s[i](transpose) * q;
     alpha[i]=stot;//p[i] * stot;
     printf("Q %d\n",i);

@@ -1,5 +1,6 @@
 #ifndef SQUARECRF_H
 #define SQUARECRF_H
+#define LBFGS_FLOAT 32
 
 #include <Python.h>
 #include <structmember.h>
@@ -9,6 +10,7 @@
 #include "immintrin.h"
 #include "avx_mathfun.h"
 #include "optimize.h"
+#include <lbfgs.h>
 
 #define COORD4(dir,x,y,f,p,X,Y,NF) (dir*X*Y*NF*2 + x*Y*NF*2 + y*NF*2 + f*2 + p)
 #define COORD3(x,y,n, X,Y,NF,O ) (x*Y*NF*O + y*NF*O + n*O)
@@ -16,6 +18,8 @@
 #define FACT_TYPE NPY_FLOAT32
 
 #define BIG 1234567.0
+
+
 
 typedef struct{
   PyObject_HEAD
@@ -27,6 +31,16 @@ typedef struct{
   f32 *unary;
   //i32 *com, *rom;
 }gridCRF_t;
+
+typedef struct {
+  gridCRF_t *self;
+  f32 *V_change, *unary_change;
+  PyArrayObject *X, *Y;
+  i32 *ainc, *binc;
+  npy_intp * dims;
+  i32 num_params, n_factors;
+  f32 alpha;
+}gradient_t;
 
 typedef struct{
   i32 x,y;
@@ -42,6 +56,11 @@ typedef struct{
   f32 stop_thresh;
 
 }loopy_params_t;
+
+
+static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step);
+static f32 _calculate_gradient(gradient_t *args);
+
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt);
 static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t lpt,PyArrayObject *refimg);
 
