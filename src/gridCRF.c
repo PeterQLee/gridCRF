@@ -1,4 +1,5 @@
 #include "gridCRF.h"
+#include "common.h"
 #include <assert.h>
 #include <stdio.h>
 #include <lbfgs.h>
@@ -7,8 +8,8 @@ f32 ALPHA=0.001;
 
 //m, epsilon, past, dleta, max_iterations, linesearch, max_linesearch, min_step, max_step,ftol,wolfe. gtol,xtp;.prtjamtwose+c,orthantwise_start, orthantwise_end
 static const lbfgs_parameter_t _defparam = {
-  6, 1e-5, 0, 1e-5,
-  15, LBFGS_LINESEARCH_DEFAULT, 40,
+  60, 1e-5, 0, 1e-5,
+  100, LBFGS_LINESEARCH_DEFAULT, 40,
   1e-20, 1e20, 1e-4, 0.9, 0.9, 1.0e-16,
   0.0, 0, -1,
 };
@@ -80,6 +81,7 @@ static int progress ( void * instance,
 		      int ls){
   return 0;
 }
+static i32 count=0;
 //backend functions
 static lbfgsfloatval_t _lbfgs_update(void *arg, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step){
   gradient_t *args=(gradient_t *) arg;
@@ -92,23 +94,32 @@ static lbfgsfloatval_t _lbfgs_update(void *arg, const lbfgsfloatval_t *x, lbfgsf
   i32 num_params= args->num_params;
   i32 n_factors=args->n_factors;
   f32 *V_change=args->V_change;
+  const f32 lr=0.0001;
   
   //for (i=0;i<n_factors*4*2;i++){
   //  V[i]+=0.1*x[i];
   //}
-  unary[0]+=0.01*x[n_factors*4*2];
-  unary[1]+=0.01*x[n_factors*4*2+1];
+  unary[0]+=lr*x[n_factors*4*2];
+  unary[1]+=lr*x[n_factors*4*2+1];
+  unary[2]+=lr*x[n_factors*4*2+2];
+  unary[3]+=lr*x[n_factors*4*2+3];
+
   //12.48040179  -3.73883933
+  /*
   unary[0]=12.48;
   unary[1]=-3.739;
 
   unary[2]=-12.48;
   unary[3]=3.739;
+  */
   f32 L=_calculate_gradient(args);
+  printf("g");
   for (i=0;i<num_params;i++) {
     g[i]=V_change[i]; //this works because V_change and unary change are contitigous
+
   }
-  printf("Error %f\n",L);
+  printf("%f %f %f %f", g[n_factors*4*2],g[n_factors*4*2+1],g[n_factors*4*2+2],g[n_factors*4*2+3]);  
+  printf("\nError %f %d\n",L,count++);
   return L;
 }
 
@@ -134,6 +145,9 @@ static f32 _calculate_gradient(gradient_t *args) {
   memset(V_change, 0, sizeof(f32)*n_factors*4*2);
   unary_change[0]=0.0f;
   unary_change[1]=0.0f;
+  unary_change[2]=0.0f;
+  unary_change[3]=0.0f;
+
   i32 n=0;
   f32 *tmp;
   f32 alpha=args->alpha;
@@ -143,26 +157,19 @@ static f32 _calculate_gradient(gradient_t *args) {
       *((f64 *)yv)=0.0; // set outome to 0
       
       if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
-      //do traversal.
-      //printf("ij %d %d\n",i,j);
       
       tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-      //f32 Eng[2];
-      //yv[0]=tmp[0];
-      //yv[1]=tmp[1];
-      yv[0]=unary[0]*tmp[0];
-      yv[1]=unary[1]*tmp[1];
-	
+      yv[0]=-(unary[0]*tmp[0]+unary[1]*tmp[1]);
+      yv[1]=-(unary[2]*tmp[0]+unary[3]*tmp[1]);
+
+
       for (n=0;n<n_factors;n++) {
 	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
-	//if (b==0 && a==n) break; //TODO: change to proper ordering(like in notes0
 	  
 	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0);
 	v=&V[n*4 + ((*l)^1)*2]; // 4x4 transfer matrix for n	
 	//We pick the row that corresponds to the outcome
 	//TODO: Improve with SSE
-	//yv[0]+=v[0]*tmp[0];
-	//yv[1]+=v[1]*tmp[1];
 	  
 	yv[0] += v[0]; //(Dependent on function)
 	yv[1] += v[1];
@@ -175,9 +182,6 @@ static f32 _calculate_gradient(gradient_t *args) {
 	yv[0] += v[0];
 	yv[1] += v[1];
       }
-      //printf("%f %f\n",yv[0],yv[1]);
-      //yv[0]*=0.2;
-      //yv[1]*=0.8;
       max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
     
       yv[0]=exp(-yv[0]-max);
@@ -189,29 +193,42 @@ static f32 _calculate_gradient(gradient_t *args) {
       l=((i32*)PyArray_GETPTR3(Y,i,j,0));
       p=(f32*)PyArray_GETPTR3(X,i,j,0);
       //L-= (*l) * log(yv[0]) /dims[0]/dims[1];
-      if (*l) {
+      if (*l && yv[0]!=0.0f) {
 	if (isinf(yv[0])) {
 	  printf("INF yv0\n");
 	}
 	L-=  log(yv[0]) /dims[0]/dims[1];
       }
+      if (*l && yv[0]==0.0f) {
+	L+=100;
+      }
       change[0] = -alpha * (((*l)&1)-yv[0]) ;
       unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
+      unary_change[1] += -alpha*(((*l)&1)-yv[0])*tmp[1];
 	
       p=(f32*)PyArray_GETPTR3(X,i,j,1);
       l=((i32*)PyArray_GETPTR3(Y,i,j,1));
       
       //L-= (*l)* log(yv[1])/dims[0]/dims[1];
-      if (*l) {
+      if (*l && yv[1]!=0.0f) {
 	if (isinf(yv[1])) {
 	  printf("INF yv1 %f\n",yv[1]);
 	}
 
 	L-= log(yv[1])/dims[0]/dims[1];
       }
+      if (*l && yv[1]==0.0f) {
+	L+=100;
+      }
+
+      //printf("yv %f %f\n",yv[0],yv[1]);
       change[1] = -alpha * (((*l)&1)-yv[1]);
-      unary_change[1] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+      
+      unary_change[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
+      unary_change[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+      
       //printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
+      
       if (isinf(L)){
 	printf("ISINF\n");
 	//exit(1);
@@ -236,6 +253,130 @@ static f32 _calculate_gradient(gradient_t *args) {
   printf("L %f\n",L);
   return L;
 }
+
+static f32 _incremental_gradient(gradient_t *args) {
+  i64 i,j,i_,j_;
+  PyArrayObject *X=args->X;
+  PyArrayObject *Y=args->Y;
+  printf("Y %x\n",Y);
+  f32 *unary= args->self->unary;
+  i32 *ainc=args->ainc, *binc=args->binc;
+  f32 * V=args->self->V_data;
+
+  f32 L=0.0f,max=0.0f,den,*p;
+  f32 yv [2];
+  f32 change[2];
+  f32 *v;
+  i32 *l;
+  npy_intp *dims=args->dims;
+  i32 n_factors = args->n_factors;
+  
+
+  i32 n=0;
+  f32 *tmp;
+  f32 alpha=args->alpha;
+  printf("dims %d %d\n",dims[0],dims[1]);
+  i64* i_inds=indlist(dims[0]);
+  i64* j_inds= indlist(dims[1]);
+  for (i_=0;i_<dims[0];i_++) {
+    for (j_=0;j_<dims[1];j_++) {
+      i=i_inds[i_];
+      j=j_inds[j_];
+      *((f64 *)yv)=0.0; // set outome to 0
+      
+      if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
+      
+      tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
+      yv[0]=-(unary[0]*tmp[0]+unary[1]*tmp[1]);
+      yv[1]=-(unary[2]*tmp[0]+unary[3]*tmp[1]);
+
+
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
+	  
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0);
+	v=&V[n*4 + ((*l)^1)*2]; // 4x4 transfer matrix for n	
+	//We pick the row that corresponds to the outcome
+	//TODO: Improve with SSE
+	  
+	yv[0] += v[0]; //(Dependent on function)
+	yv[1] += v[1];
+      }
+      //do left to right
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
+	v=&V[n_factors*4 + n*4 + 2*((*l)^1)]; 
+	yv[0] += v[0];
+	yv[1] += v[1];
+      }
+      max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
+    
+      yv[0]=exp(-yv[0]-max);
+      yv[1]=exp(-yv[1]-max);
+      den=1/(yv[0]+yv[1]);
+      yv[0]=yv[0]*den;
+      yv[1]=yv[1]*den;
+
+      l=((i32*)PyArray_GETPTR3(Y,i,j,0));
+      p=(f32*)PyArray_GETPTR3(X,i,j,0);
+
+      if (*l && yv[0]!=0.0f) {
+	if (isinf(yv[0])) {
+	  printf("INF yv0\n");
+	}
+	L-=  log(yv[0]) /dims[0]/dims[1];
+      }
+      change[0] = -alpha * (((*l)&1)-yv[0]) ;
+      unary[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
+      unary[1] += -alpha*(((*l)&1)-yv[0])*tmp[1];
+	
+      p=(f32*)PyArray_GETPTR3(X,i,j,1);
+      l=((i32*)PyArray_GETPTR3(Y,i,j,1));
+      
+      //L-= (*l)* log(yv[1])/dims[0]/dims[1];
+      if (*l && yv[1]!=0.0f) {
+	if (isinf(yv[1])) {
+	  printf("INF yv1 %f\n",yv[1]);
+	}
+
+	L-= log(yv[1])/dims[0]/dims[1];
+      }
+      //printf("yv %f %f\n",yv[0],yv[1]);
+      change[1] = -alpha * (((*l)&1)-yv[1]);
+      
+      unary[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
+      unary[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+      
+      //printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
+      
+      if (isinf(L)){
+	printf("ISINF\n");
+	//exit(1);
+      }
+      /*
+      for (n=0;n<n_factors;n++){
+	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
+	//TODO: speed up (SSE) __m128 _mm_add_ps
+	l=((i32*) PyArray_GETPTR3(Y,i+ainc[n],j+binc[n],0));
+	V[n*4 + 2*((*l)^1)] += change[0];
+	V[n*4 + 2*((*l)^1) + 1] += change[1];
+      }
+      
+      for (n=0;n<n_factors;n++) {
+	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
+	l=(i32*) PyArray_GETPTR3(Y,i+ainc[n+n_factors],j+binc[n+n_factors],0);
+	V[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
+	V[n_factors*4 +n*4 + 2*((*l)^1) + 1] += change[1];	  
+      }
+      */
+    }
+  }
+  printf("L %f\n",L);
+  return L;
+}
+
+
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt){
   #define NUM_UNARY 4
   npy_intp * dims= PyArray_DIMS(X);
@@ -329,144 +470,24 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   //lbfgs_parameter_init(&lbfgs_param);
 
   f32 fx;
+  #define LBFGS 0
+  #if LBFGS
   i32 ret= lbfgs(num_params,x,&fx, _lbfgs_update, NULL, (void *)&gradargs, &_defparam);
   printf("orth %d %d\n",_defparam.orthantwise_start,epochs); //Invalid orthantwise_start
   printf("ret %d %d\n",ret,LBFGSERR_INVALID_ORTHANTWISE_START); //Invalid orthantwise_start
-  
-  
-  #if 0
-  for (its=0;its<epochs;its++) {
-    lbfgs(
+  #else
+  for (i=0;i<epochs;i++ ){
+    _incremental_gradient(&gradargs);
   }
-    printf("Start %d %d %d\n",lbfgs->start, lbfgs->cur, lbfgs->m);
-    printf("Cross entropy %f\n",L);
-    if (lbfgs->cur !=0 ){
-      if (lbfgs->cur < lbfgs->m) { //This doesn't work if cur=0
-	//
-	//memcpy(V_change,&(lbfgs->g[num_params*lbfgs->cur]),n_factors*4*2*sizeof(f32));
-	cur=lbfgs->cur;
-	for (n=0;n<n_factors*4*2;n++) {
-	  lbfgs->g[num_params*cur+n]=V_change[n];
-	}
-	lbfgs->g[num_params*(cur)+n_factors*4*2]=unary_change[0];
-	lbfgs->g[num_params*(cur)+n_factors*4*2+1]=unary_change[1];
-	lbfgs->g[num_params*(cur)+n_factors*4*2+2]=unary_change[2];
-	lbfgs->g[num_params*(cur)+n_factors*4*2+3]=unary_change[3];
-
-	lbfgs->p[cur]=0.0;
-	for (n=0;n<num_params;n++) {
-	  lbfgs->y[num_params*(cur-1) +n] = lbfgs->g[num_params*cur+n] - lbfgs->g[num_params*(cur-1)+n];
-	  lbfgs->s[num_params*(cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
-	  printf("g1 g0 %f %f %d\n", lbfgs->g[num_params*cur+n] , lbfgs->g[num_params*(cur-1)+n],num_params*(cur-1)+n);
-	  printf("y s %f %f\n", lbfgs->y[num_params*(cur-1) +n], lbfgs->s[num_params*(cur-1) +n]);
-	  lbfgs->p[cur] += lbfgs->y[num_params*(cur-1) +n] * lbfgs->s[num_params*(cur-1) +n];
-	}
-	lbfgs->p[cur]=1/(lbfgs->p[cur]);
-	printf("p %f %d\n",lbfgs->p[cur],cur);
-	lbfgs->cur++;
-      }
-      else{
-	cur=(lbfgs->start) %(lbfgs->m+1);
-	last=(lbfgs->start + lbfgs->m-1) %(lbfgs->m+1);
-	for (n=0;n<n_factors*4*2;n++) {
-	  lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
-	}
-	//memcpy(V_change,&(lbfgs->g[num_params*cur]),n_factors*4*2*(sizeof(f32)));
-	lbfgs->g[num_params*cur+n_factors*4*2]=unary_change[0];
-	lbfgs->g[num_params*cur+n_factors*4*2+1]=unary_change[1];
-	lbfgs->g[num_params*cur+n_factors*4*2+2]=unary_change[2];
-	lbfgs->g[num_params*cur+n_factors*4*2+3]=unary_change[3];
-
-	lbfgs->p[cur]=0.0;
-	for (n=0;n<num_params;n++) {
-	  lbfgs->y[num_params*(cur-1) +n] = lbfgs->g[num_params*last+n] - lbfgs->g[num_params*(last-1)+n];
-	  lbfgs->s[num_params*(cur-1) +n] = lbfgs->l_change[n] - lbfgs->ll_change[n]; //not if 0
-	  lbfgs->p[cur] += lbfgs->y[num_params*(last) +n] * lbfgs->s[num_params*(last) +n];
-	}
-	printf("p %f %d\n",lbfgs->p[cur],lbfgs->cur);
-	lbfgs->p[cur]=1/(lbfgs->p[cur]);
-	lbfgs->start= (lbfgs->start+1)%(lbfgs->m + 1);
-
-
-      }
-      
-      //Warning lastlast_change will be overwritten in next move
-      tmp=lbfgs->l_change;
-      lbfgs->l_change= lbfgs->ll_change;
-      lbfgs->ll_change=tmp;
-      LBFGS(lbfgs);
-      printf("CHHHANGE ");
-      for (n=0;n<n_factors*4*2;n++) {
-	V[n] += alpha*lbfgs->l_change[n];
-	printf("%f ",lbfgs->l_change[n]);
-      }
-      printf("\n");
-      unary[0]+=alpha*lbfgs->l_change[n_factors*4*2];
-      unary[1]+=alpha*lbfgs->l_change[n_factors*4*2+1];
-    }
-    
-
-    else{
-      for (n=0;n<n_factors*4*2;n++) {
-	lbfgs->g[num_params*lbfgs->cur+n]=V_change[n];
-	printf("og %f %d\n",lbfgs->g[num_params*lbfgs->cur+n],num_params*lbfgs->cur+n);
-	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      }
-      lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
-      lbfgs->g[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-
-      for (n=0;n<n_factors*4*2;n++) {
-	lbfgs->s[num_params*lbfgs->cur+n]=V_change[n];
-	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      }
-      //memcpy(&(lbfgs->s[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
-      lbfgs->s[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-      for (n=0;n<n_factors*4*2;n++) {
-	lbfgs->y[num_params*lbfgs->cur+n]=V_change[n];
-	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      }
-      //memcpy(&(lbfgs->y[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2]=unary_change[0];
-      lbfgs->y[num_params*(lbfgs->cur)+n_factors*4*2+1]=unary_change[1];
-
-      for (n=0;n<n_factors*4*2;n++) {
-	lbfgs->l_change[n]=V_change[n];
-	//memcpy(&(lbfgs->g[num_params*lbfgs->cur]),V_change,n_factors*4*2*sizeof(f32));
-      }
-      //memcpy((lbfgs->l_change),V_change,n_factors*4*2*sizeof(f32));
-      lbfgs->l_change[n_factors*4*2]=unary_change[0];
-      lbfgs->l_change[n_factors*4*2+1]=unary_change[1];
-      lbfgs->p[0]=0.0f;
-      for (n=0;n<n_factors*4*2;n++) {
-	lbfgs->p[0] += lbfgs->y[num_params*lbfgs->cur+n] * lbfgs->s[num_params*lbfgs->cur+n];
-      }
-      printf("AP %f\n",lbfgs->p[0]);
-      lbfgs->p[0]=1/(lbfgs->p[0]);
-
-      memset((lbfgs->ll_change),0,sizeof(f32)*num_params);
-      lbfgs->cur++;
-
-      for (n=0;n<n_factors*4*2;n+=8) {
-	printf("n %d %f %f %f %f %f %f %f %f\n", n, V_change[n],V_change[n+1],V_change[n+2],V_change[n+3],V_change[n+4],V_change[n+5],V_change[n+6],V_change[n+7]);
-	r1=_mm256_load_ps(&V_change[n]);
-	r2=_mm256_load_ps(&V[n]);
-	r1=_mm256_add_ps(r1,r2);
-	_mm256_store_ps(&V[n],r1);
-	
-      }
-      unary[0] += unary_change[0];
-      unary[1] += unary_change[1];
-    
-    }
-    
-    }
   #endif
-  printf("unary %f %f \n",unary[0],unary[1]);
+
+ 
+  printf("unary %f %f %f %f\n",unary[0],unary[1],unary[2],unary[3]);
   //Values trained now
   printf("Done train");
   free(ainc);
   free(binc);
+  lbfgs_free(x);
   
 }
 
@@ -885,7 +906,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
     for (y=0;y<dims[1];y++) {
       origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
       assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
-      printf("%f ",marginals[origin+1]-marginals[origin]);
+      //printf("%f ",marginals[origin+1]-marginals[origin]);
       if (marginals[origin] > marginals[origin+1]) {
 	*((npy_int32*)PyArray_GETPTR2(ret,x,y))= 0;
 	//ret_data[x*dims[1] + y]=0;
