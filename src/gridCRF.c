@@ -94,16 +94,23 @@ static lbfgsfloatval_t _lbfgs_update(void *arg, const lbfgsfloatval_t *x, lbfgsf
   i32 num_params= args->num_params;
   i32 n_factors=args->n_factors;
   f32 *V_change=args->V_change;
-  const f32 lr=0.0001;
-  
-  //for (i=0;i<n_factors*4*2;i++){
-  //  V[i]+=0.1*x[i];
-  //}
+  const f32 lr=0.01;
+  for (i=0;i<n_factors*4*2;i++){
+    V[i]+=lr*V_change[i];
+  }
+  unary[0]+=lr*V_change[n_factors*4*2];
+  unary[1]+=lr*V_change[n_factors*4*2+1];
+  unary[2]+=lr*V_change[n_factors*4*2+2];
+  unary[3]+=lr*V_change[n_factors*4*2+3];
+  /*
+  for (i=0;i<n_factors*4*2;i++){
+    V[i]+=lr*x[i];
+  }
   unary[0]+=lr*x[n_factors*4*2];
   unary[1]+=lr*x[n_factors*4*2+1];
   unary[2]+=lr*x[n_factors*4*2+2];
   unary[3]+=lr*x[n_factors*4*2+3];
-
+  */
   //12.48040179  -3.73883933
   /*
   unary[0]=12.48;
@@ -116,7 +123,7 @@ static lbfgsfloatval_t _lbfgs_update(void *arg, const lbfgsfloatval_t *x, lbfgsf
   printf("g");
   for (i=0;i<num_params;i++) {
     g[i]=V_change[i]; //this works because V_change and unary change are contitigous
-
+    
   }
   printf("%f %f %f %f", g[n_factors*4*2],g[n_factors*4*2+1],g[n_factors*4*2+2],g[n_factors*4*2+3]);  
   printf("\nError %f %d\n",L,count++);
@@ -159,8 +166,8 @@ static f32 _calculate_gradient(gradient_t *args) {
       if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
       tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-      yv[0]=-(unary[0]*tmp[0]+unary[1]*tmp[1]);
-      yv[1]=-(unary[2]*tmp[0]+unary[3]*tmp[1]);
+      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
+      yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
 
       for (n=0;n<n_factors;n++) {
@@ -226,7 +233,6 @@ static f32 _calculate_gradient(gradient_t *args) {
       
       unary_change[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
       unary_change[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
-      
       //printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
       
       if (isinf(L)){
@@ -287,8 +293,8 @@ static f32 _incremental_gradient(gradient_t *args) {
       if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
       tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-      yv[0]=-(unary[0]*tmp[0]+unary[1]*tmp[1]);
-      yv[1]=-(unary[2]*tmp[0]+unary[3]*tmp[1]);
+      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
+      yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
 
       for (n=0;n<n_factors;n++) {
@@ -347,14 +353,18 @@ static f32 _incremental_gradient(gradient_t *args) {
       
       unary[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
       unary[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
-      
+
+      if (i==50 && j==50) {
+	printf("50 50 change %f %f",-(((*l)&1)-yv[1])*tmp[0],-(((*l)&1)-yv[1])*tmp[1]);
+      }
+
       //printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
       
       if (isinf(L)){
 	printf("ISINF\n");
 	//exit(1);
       }
-      /*
+      
       for (n=0;n<n_factors;n++){
 	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
 	//TODO: speed up (SSE) __m128 _mm_add_ps
@@ -369,7 +379,7 @@ static f32 _incremental_gradient(gradient_t *args) {
 	V[n_factors*4 +n*4 + 2*((*l)^1)] += change[0];
 	V[n_factors*4 +n*4 + 2*((*l)^1) + 1] += change[1];	  
       }
-      */
+      
     }
   }
   printf("L %f\n",L);
@@ -895,11 +905,7 @@ static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t
       break;
     }
   }
-  i32 * ret_data = malloc(dims[0]*dims[1]*sizeof(i32) );
-  //PyArray* ret = PyArray_New(subtype,2,dims,NPY_INT32,NULL,ret_data,itemsize,NPY_ARRAY_OWNDATA,obj);
 
-  //Py_INCREF(ret);
-  //Give argmax residuals in ret
   PyArrayObject* ret= PyArray_SimpleNew(2,dims,NPY_INT32);
   printf("MARGINALS\n");
   for (x=0;x<dims[0];x++) {

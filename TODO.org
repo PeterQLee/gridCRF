@@ -1,0 +1,32 @@
+* Need to make a seperate linalg module for array selection and whatnot
+* TODO Train
+Come up with actual updates for train and test with algorithm.
+** TODO Experiment with SSE weight updates, see if there is any performance boost.
+** TODO Add in l2 norms31
+
+** Make weight update incremental rather than aggregate.
+
+* Loopy
+** Finish loopy with  marginal evaluation
+** DONE Calculate normalizing factor
+** DONE fIGURE what is wrong with self->n_factors, it seems to be the only reason the program is segfaulting
+   It was bc i forgot header
+** DONE Test if setting NPY_ARRAY_OWNDATA will allow memory to be freed after its done.
+Not needeed
+** TODO Consider transposing V_F and F_V to have channels in higher dimensions like CE and RE
+** DONE Check bounds in loopy
+** According to intel, mm_malloc must be freed with _mm_free
+** DONE Check rom and com
+
+Revise rom and com so they get right columns in direction.
+** Find out where nan's are coming from
+*** DONE exp 
+*** DONE Outside bounds 
+*** DONE Softmax 
+*** DONE Test the set1_pd(base), might be going out of order?
+Works as intended.
+*** The coordinate (3, 89) is overflowing first
+It is also a pixel on the border, this is probably not a coincidence.
+F_V are overflowing
+
+** Change the unary function for linear combination, or none
