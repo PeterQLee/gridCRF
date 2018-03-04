@@ -32,14 +32,24 @@ typedef struct{
   //i32 *com, *rom;
 }gridCRF_t;
 
+typedef struct{
+  i32 max_its;
+  f32 stop_thresh;
+  f32 *mu;
+  i32 eval;
+}loopy_params_t;
+
 typedef struct {
   gridCRF_t *self;
   f32 *V_change, *unary_change;
-  PyArrayObject *X, *Y;
+  PyArrayObject *X, *Y, *EY;
   i32 *ainc, *binc;
   npy_intp * dims;
+  npy_intp * start;
   i32 num_params, n_factors;
   f32 alpha;
+  PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
+  loopy_params_t *lpt;
 }gradient_t;
 
 typedef struct{
@@ -51,18 +61,12 @@ typedef struct{
   f32 alpha;
 }train_params_t;
 
-typedef struct{
-  i32 max_its;
-  f32 stop_thresh;
-
-}loopy_params_t;
-
 
 static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step);
 static f32 _calculate_gradient(gradient_t *args);
 
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt);
-static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t lpt,PyArrayObject *refimg);
+static PyArrayObject* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t *lpt,PyArrayObject *refimg);
 
 static PyObject* fit (gridCRF_t * self, PyObject *args, PyObject *kws);
 static PyObject* predict(gridCRF_t *self, PyObject *args, PyObject *kws);
