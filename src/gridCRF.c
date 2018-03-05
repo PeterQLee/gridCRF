@@ -934,7 +934,15 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpt,PyAr
     }
   }
   //PyArray_ENABLEFLAGS((PyArrayObject*)ret, NPY_ARRAY_OWNDATA); //TODO: check if this actually frees memory
-
+  free(com);
+  free(rom);
+  free(co_pairs);
+  _mm_free(marginals);
+  _mm_free(RE);
+  _mm_free(CE);
+  _mm_free(F_V);
+  _mm_free(V_F);
+  
   return ret;
 }
 
