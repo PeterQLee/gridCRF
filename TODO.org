@@ -15,11 +15,11 @@ Come up with actual updates for train and test with algorithm.
 Not needeed
 ** TODO Consider transposing V_F and F_V to have channels in higher dimensions like CE and RE
 ** DONE Check bounds in loopy
-** According to intel, mm_malloc must be freed with _mm_free
+** DONE According to intel, mm_malloc must be freed with _mm_free
 ** DONE Check rom and com
 
 Revise rom and com so they get right columns in direction.
-** Find out where nan's are coming from
+** DONE Find out where nan's are coming from
 *** DONE exp 
 *** DONE Outside bounds 
 *** DONE Softmax 
@@ -29,4 +29,4 @@ Works as intended.
 It is also a pixel on the border, this is probably not a coincidence.
 F_V are overflowing
 
-** Change the unary function for linear combination, or none
+** TODO Change the unary function for linear combination, or none

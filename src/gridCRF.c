@@ -502,8 +502,11 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
  
   f32 yv[2], change[2];
   f32 max,den;
+
+  /* Coordinate offsets */
   i32 *ainc = malloc(sizeof(i32)*n_factors*2);
   i32 *binc = malloc(sizeof(i32)*n_factors*2);
+  
   f32 L=0.0;
   f32 alpha=tpt.alpha;
 
@@ -946,6 +949,99 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpt,PyAr
   return ret;
 }
 
+void _loopyCPU__FtoV(){
+  /* Compute factor to variable messages */
+  i64 i,j;
+
+  for (i=start[0];i<dims[0];i++) {
+    for (j=start[1];j<dims[1];j++ ){
+      if (i==stop[0] && j==stop[1]) goto loopyFtoVstop;
+      	//factor to variable messages
+	//Make MS, energies + variable to factor messages..
+	//do top and left factors
+	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
+
+	if (refimg)
+	  l= *((i32*) PyArray_GETPTR2(refimg,x,y));
+	for (n=0;n<n_factors && l; n+=4) {//Here
+
+	  /*
+	    r1: c0_00, c0_01
+	        c1_00, c1_01,
+		c2_00, c2_01,
+		c3_00, c2_01
+		
+	    r2: c0_10, c0_11,
+	        c1_10, c1_11
+	        c2_10, c2_11
+	        c3_10, c3_11
+
+	  */
+	  r1=_mm256_load_ps(&RE[n*2]);
+	  r2=_mm256_load_ps(&RE[n_factors*2 + n*2]);
+	  r3=_mm256_load_ps(&V_F[origin]);
+	  r4=_mm256_permute_ps(r3, 0xA0); //Outcomes that start at 0
+					  //for factors 0 and 1 and 2 and 3
+	  r1=_mm256_add_ps(r1,r4);
+	  
+	  r4=_mm256_permute_ps(r3, 0xF5); //Outcomes that start at 1
+					  //for factors 0 and 1 and 2 and 3
+	  r2=_mm256_add_ps(r2,r4);
+
+	  /* Take the max energy based on which state it came from*/
+	  r3=_mm256_max_ps(r1,r2);
+	  
+	  /*Delegate r3 to appropriate destinations*/
+	
+	  for (m=n;m<n+4;m++){
+	    cop=co_pairs[m];
+	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
+	    co=origin+com[m] + 2*(m-n) + n_factors*2;
+	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[co] = r3[2*(m-n)];
+
+	      F_V[co+1] = r3[2*(m-n)+1];
+	    }
+	    
+	  }
+	}
+	
+	//do below and right factors
+	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
+	for (n=n_factors;n<2*n_factors && l; n+=4) {
+	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
+	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
+	  r3=_mm256_load_ps(&V_F[origin]);
+	  r4=_mm256_permute_ps(r3, 0xA0);
+	  r1=_mm256_add_ps(r1,r4);
+	  r4=_mm256_permute_ps(r3, 0xF5);
+	  r2=_mm256_add_ps(r2,r4);
+	  r3=_mm256_max_ps(r1,r2);
+	  //Delegate r3 to appropriate destination
+	  for (m=n;m<n+4;m++){ //todo, calculate rom
+	    cop=co_pairs[m-n_factors];
+	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
+	    co=origin+rom[m-n_factors] + 2*(m-n);
+	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[co] = r3[2*(m-n)];
+	      F_V[co+1] = r3[2*(m-n)+1];
+	    }
+	  }
+	}
+	//luckily, # factors is guarunteed to be divisible by 4. So no worry about edge cases!
+    }
+
+
+  }
+
+ loopyFtoVstop:
+}
+
+void _loopyCPU__VtoF() {
+   /* Compute variable to factor messages */ 
+}
   
 // visible functions
 
