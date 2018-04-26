@@ -20,6 +20,9 @@
 
 #define BIG 1234567.0
 
+typedef struct{
+  i32 x,y;
+}om_pair;
 
 
 typedef struct{
@@ -41,6 +44,25 @@ typedef struct{
   i32 *EY;
 }loopy_params_t;
 
+typedef struct{
+  i32 *start, *stop; //threading
+
+  /* coordinates */
+  i32 *com, *rom;
+  om_pair *co_pairs;
+
+  /* parameter data */
+  loopy_params_t * lpar;
+  gridCRF_t *self;
+  PyArrayObject *X, *refimg;
+  f32 *F_V, *V_F;
+  f32 *marginals, *mu;
+  
+  /* flags */
+  i32 *converged;
+  
+} loopycpu_t;
+
 typedef struct {
   gridCRF_t *self;
   f32 *V_change, *unary_change;
@@ -56,9 +78,6 @@ typedef struct {
   f32 L;
 }gradient_t;
 
-typedef struct{
-  i32 x,y;
-}om_pair;
 
 typedef struct{
   i32 epochs;

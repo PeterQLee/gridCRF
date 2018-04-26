@@ -150,7 +150,7 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   f32 *V=(args->self)->V_data;
   pthread_t *threads= malloc(sizeof(pthread_t)*n_threads);
   npy_intp *dims=args->dims;
-  i32 *EY=_mm_malloc(sizeof(i32)*dims[0]*dims[1],2);
+  i32 *EY=_mm_malloc(sizeof(i32)*dims[0]*dims[1],32);
   args->lpar->EY=EY;
   
   i32 num_params= args->num_params;
@@ -402,8 +402,10 @@ static f32 _incremental_gradient(gradient_t *args) {
   printf("dims %d %d\n",dims[0],dims[1]);
   i64* i_inds=indlist(dims[0]);
   i64* j_inds= indlist(dims[1]);
-  
-  PyArrayObject *EY = (*args->loopy_func)(args->self,X,args->lpar,NULL);
+
+  i32 *EY = _mm_malloc(sizeof(i32)*dims[0]*dims[1],32);
+  args->lpar->EY = EY;
+  (*args->loopy_func)(args->self,X,args->lpar,NULL);
     
   for (i_=0;i_<dims[0];i_++) {
     for (j_=0;j_<dims[1];j_++) {
@@ -421,7 +423,8 @@ static f32 _incremental_gradient(gradient_t *args) {
       for (n=0;n<n_factors;n++) {
 	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
 	  
-	l=(i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]);
+	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]);
+	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
 	v=&V[n*4 + ((*l)&1)*2]; // 4x4 transfer matrix for n	
 	//We pick the row that corresponds to the outcome
 	//TODO: Improve with SSE
@@ -437,7 +440,8 @@ static f32 _incremental_gradient(gradient_t *args) {
       //do left to right
       for (n=0;n<n_factors;n++) {
 	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
-	l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
+	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
+	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
 	v=&V[n_factors*4 + n*4 + 2*((*l)&1)]; 
 	yv[0] += v[0];
 	yv[1] += v[1];
@@ -494,14 +498,16 @@ static f32 _incremental_gradient(gradient_t *args) {
       for (n=0;n<n_factors;n++){
 	if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
 	//TODO: speed up (SSE) __m128 _mm_add_ps
-	l=((i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]));
+	//l=((i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]));
+	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
 	V[n*4 + 2*((*l)&1)] += change[0];
 	V[n*4 + 2*((*l)&1) + 1] += change[1];
       }
       
       for (n=0;n<n_factors;n++) {
 	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
-	l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
+	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
+	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
 	V[n_factors*4 +n*4 + 2*((*l)&1)] += change[0];
 	V[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1];	  
       }
@@ -579,7 +585,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   f32 * mu= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
   loopy_params_t lpar;
   lpar.mu=mu;
-  lpar.max_its=1000;//100;
+  lpar.max_its=100;//100;
   lpar.stop_thresh=0.001;
   lpar.eval=1;
   lpar.EY=NULL;
@@ -601,6 +607,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   gradargs.loopy_func=&_loopyCPU;
   gradargs.lpar=&lpar;
 
+  #define N_THREADS 1
   
   #define LBFGS 0
   #define GRAD 1
@@ -632,7 +639,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
 								//orthantwise_start
   lbfgs_free(x);
   #elif GRAD
-  grad_descent(&gradargs,epochs,4);
+  grad_descent(&gradargs,epochs,N_THREADS);
   #else
   for (i=0;i<epochs;i++ ){
     _incremental_gradient(&gradargs);
@@ -955,12 +962,12 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyA
 	assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
 	//printf("%f ",marginals[origin+1]-marginals[origin]);
 	if (marginals[origin] > marginals[origin+1]) {
-	  ret[y*dims[0]+x]=0;
+	  ret[COORD2(x,y,dims[0],dims[1],1)]=0;
 	  //*((npy_int32*)PyArray_GETPTR2(ret,x,y))= 0;
 	  //ret_data[x*dims[1] + y]=0;
 	}
 	else{
-	  ret[y*dims[0]+x]=1;
+	  ret[COORD2(x,y,dims[0],dims[1],1)]=1;
 	  //*((npy_int32*)PyArray_GETPTR2(ret,x,y))= 1;
 	  //ret_data[x*dims[1] + y]=1;
 	}
@@ -981,101 +988,7 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyA
   return ret;
 }
 
-#if 0
-void _loopyCPU__FtoV(){
-  /* Compute factor to variable messages */
-  i64 i,j;
 
-  for (i=start[0];i<dims[0];i++) {
-    for (j=start[1];j<dims[1];j++ ){
-      if (i==stop[0] && j==stop[1]) goto loopyFtoVstop;
-      	//factor to variable messages
-	//Make MS, energies + variable to factor messages..
-	//do top and left factors
-	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
-
-	if (refimg)
-	  l= *((i32*) PyArray_GETPTR2(refimg,x,y));
-	for (n=0;n<n_factors && l; n+=4) {//Here
-
-	  /*
-	    r1: c0_00, c0_01
-	        c1_00, c1_01,
-		c2_00, c2_01,
-		c3_00, c2_01
-		
-	    r2: c0_10, c0_11,
-	        c1_10, c1_11
-	        c2_10, c2_11
-	        c3_10, c3_11
-
-	  */
-	  r1=_mm256_load_ps(&RE[n*2]);
-	  r2=_mm256_load_ps(&RE[n_factors*2 + n*2]);
-	  r3=_mm256_load_ps(&V_F[origin]);
-	  r4=_mm256_permute_ps(r3, 0xA0); //Outcomes that start at 0
-					  //for factors 0 and 1 and 2 and 3
-	  r1=_mm256_add_ps(r1,r4);
-	  
-	  r4=_mm256_permute_ps(r3, 0xF5); //Outcomes that start at 1
-					  //for factors 0 and 1 and 2 and 3
-	  r2=_mm256_add_ps(r2,r4);
-
-	  /* Take the max energy based on which state it came from*/
-	  r3=_mm256_max_ps(r1,r2);
-	  
-	  /*Delegate r3 to appropriate destinations*/
-	
-	  for (m=n;m<n+4;m++){
-	    cop=co_pairs[m];
-	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
-	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
-	    co=origin+com[m] + 2*(m-n) + n_factors*2;
-	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[co] = r3[2*(m-n)];
-
-	      F_V[co+1] = r3[2*(m-n)+1];
-	    }
-	    
-	  }
-	}
-	
-	//do below and right factors
-	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
-	for (n=n_factors;n<2*n_factors && l; n+=4) {
-	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
-	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
-	  r3=_mm256_load_ps(&V_F[origin]);
-	  r4=_mm256_permute_ps(r3, 0xA0);
-	  r1=_mm256_add_ps(r1,r4);
-	  r4=_mm256_permute_ps(r3, 0xF5);
-	  r2=_mm256_add_ps(r2,r4);
-	  r3=_mm256_max_ps(r1,r2);
-	  //Delegate r3 to appropriate destination
-	  for (m=n;m<n+4;m++){ //todo, calculate rom
-	    cop=co_pairs[m-n_factors];
-	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
-	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
-	    co=origin+rom[m-n_factors] + 2*(m-n);
-	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
-	      F_V[co] = r3[2*(m-n)];
-	      F_V[co+1] = r3[2*(m-n)+1];
-	    }
-	  }
-	}
-	//luckily, # factors is guarunteed to be divisible by 4. So no worry about edge cases!
-    }
-
-
-  }
-
- loopyFtoVstop:
-}
-
-void _loopyCPU__VtoF() {
-   /* Compute variable to factor messages */ 
-}
-#endif  
 // visible functions
 
 static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
