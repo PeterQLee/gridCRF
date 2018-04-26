@@ -8,81 +8,11 @@
 #include <types.h>
 #include <math.h>
 #include "immintrin.h"
-#include "avx_mathfun.h"
+//#include "avx_mathfun.h"
 #include "optimize.h"
 #include <lbfgs.h>
-
-#define COORD4(dir,x,y,f,p,X,Y,NF) (dir*X*Y*NF*2 + x*Y*NF*2 + y*NF*2 + f*2 + p)
-#define COORD3(x,y,n, X,Y,NF,O ) (x*Y*NF*O + y*NF*O + n*O)
-#define COORD2(x,y,X,Y,O) (x*Y*O +y*O)
-
-#define FACT_TYPE NPY_FLOAT32
-
-#define BIG 1234567.0
-
-typedef struct{
-  i32 x,y;
-}om_pair;
-
-
-typedef struct{
-  PyObject_HEAD
-  i64 n_outcomes;
-  i64 n_factors;
-  i64 depth;
-  PyArrayObject *V;
-  f32 *V_data;
-  f32 *unary;
-  //i32 *com, *rom;
-}gridCRF_t;
-
-typedef struct{
-  i32 max_its;
-  f32 stop_thresh;
-  f32 *mu;
-  i32 eval;
-  i32 *EY;
-}loopy_params_t;
-
-typedef struct{
-  i32 *start, *stop; //threading
-
-  /* coordinates */
-  i32 *com, *rom;
-  om_pair *co_pairs;
-
-  /* parameter data */
-  loopy_params_t * lpar;
-  gridCRF_t *self;
-  PyArrayObject *X, *refimg;
-  f32 *F_V, *V_F;
-  f32 *marginals, *mu;
-  
-  /* flags */
-  i32 *converged;
-  
-} loopycpu_t;
-
-typedef struct {
-  gridCRF_t *self;
-  f32 *V_change, *unary_change;
-  PyArrayObject *X, *Y, *EY;
-  i32 *ainc, *binc;
-  npy_intp * dims;
-  npy_intp * start;
-  npy_intp * stop;
-  i32 num_params, n_factors;
-  f32 alpha;
-  PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
-  loopy_params_t *lpar;
-  f32 L;
-}gradient_t;
-
-
-typedef struct{
-  i32 epochs;
-  f32 alpha;
-}train_params_t;
+#include "gridtypes.h"
+#include "loopy.h"
 
 
 static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step);

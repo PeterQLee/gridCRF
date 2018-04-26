@@ -187,8 +187,8 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   
   for (i=0;i<epochs;i++) {
     // Do a loop iteration to get estimated outcomes with this parameterization
+    //(*args->loopy_func)(args->self,X,args->lpar,NULL);
     (*args->loopy_func)(args->self,X,args->lpar,NULL);
-    
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h],NULL,(void*) _calculate_gradient,&targs[h]);
     }
@@ -589,6 +589,7 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   lpar.stop_thresh=0.001;
   lpar.eval=1;
   lpar.EY=NULL;
+  lpar.n_threads=8;
 
   //calculate initial gradient to get things going
   gradient_t gradargs;
@@ -604,7 +605,8 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   gradargs.num_params=num_params;
   gradargs.n_factors=n_factors;
   gradargs.alpha=alpha;
-  gradargs.loopy_func=&_loopyCPU;
+  //gradargs.loopy_func=&_loopyCPU;
+  gradargs.loopy_func=&loopyCPU;
   gradargs.lpar=&lpar;
 
   #define N_THREADS 1
