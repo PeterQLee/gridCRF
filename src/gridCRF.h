@@ -52,7 +52,7 @@ typedef struct {
   i32 num_params, n_factors;
   f32 alpha;
   PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
-  loopy_params_t *lpt;
+  loopy_params_t *lpar;
   f32 L;
 }gradient_t;
 
@@ -70,7 +70,7 @@ static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgs
 static void* _calculate_gradient(gradient_t *args);
 
 static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt);
-static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t *lpt,PyArrayObject *refimg);
+static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t *lpar,PyArrayObject *refimg);
 
 static PyObject* fit (gridCRF_t * self, PyObject *args, PyObject *kws);
 static PyObject* predict(gridCRF_t *self, PyObject *args, PyObject *kws);

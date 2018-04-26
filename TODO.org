@@ -6,6 +6,9 @@ Come up with actual updates for train and test with algorithm.
 
 ** Make weight update incremental rather than aggregate.
 
+** TODO During training, try reusing the energies from the last iteration. 
+This may save some update steps.
+
 * Loopy
 ** Finish loopy with  marginal evaluation
 ** DONE Calculate normalizing factor
