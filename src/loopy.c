@@ -1,4 +1,5 @@
 #include "loopy.h"
+#include "loopy_gpu.h"
 
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
   //fix type
@@ -145,6 +146,9 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     converged = 1;
     
     /* Calculate factor to variable messages */
+    gpu_loopy_F_V(&targs[0]);
+    
+    /*
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h], NULL, (void*) _loopyCPU__FtoV, &targs[h]);
     }
@@ -152,7 +156,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     for (h=0;h<n_threads;h++) {
       pthread_join(threads[h],NULL);
     }
-
+    */
     /* calculate variable to factor messages */
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h], NULL, (void*) _loopyCPU__VtoF, &targs[h]);

@@ -5,9 +5,10 @@ import os
 
 setup_kwargs={
     'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
-    'libraries': ['lbfgs'],
-    'library_dirs':['/usr/local/lib'],
-
+    'libraries': ['lbfgs','cudart'],
+    'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],
+    #'library_dirs':['/usr/local/lib','build/gpu'],
+    'extra_objects':['build/gpu/loopy_gpu.o','build/gpu/loopy_gpu_dlink.o']
 }
 
 setup(name="BoardPy", version="1.0",
