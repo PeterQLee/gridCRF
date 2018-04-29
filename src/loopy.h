@@ -23,8 +23,11 @@ typedef struct{
   
 } loopycpu_t;
 
+#ifndef _cplusplus
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg);
 
 static void * _loopyCPU__FtoV(loopycpu_t *l_args);
 static void * _loopyCPU__VtoF(loopycpu_t *l_args);
+#endif
+
 #endif

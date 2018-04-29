@@ -252,7 +252,7 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	    cop=co_pairs[m];
 	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
 	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
-	    co=origin+com[m] + 2*(m-n) + n_factors*2;
+	    co=origin+com[m] + 2*(m-n) + n_factors*2; //what's the 2*(m-n) for?????
 	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
 
