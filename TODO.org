@@ -33,3 +33,8 @@ It is also a pixel on the border, this is probably not a coincidence.
 F_V are overflowing
 
 ** TODO Change the unary function for linear combination, or none
+
+
+* GPU Loopy
+** Got F_V working exactly the same as CPU
+See /mnt/D2/crf_experiments for comparison 

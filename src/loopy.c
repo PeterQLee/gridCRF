@@ -146,9 +146,9 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     converged = 1;
     
     /* Calculate factor to variable messages */
-    gpu_loopy_F_V(&targs[0]);
+    //gpu_loopy_F_V(&targs[0]);
+
     
-    /*
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h], NULL, (void*) _loopyCPU__FtoV, &targs[h]);
     }
@@ -156,8 +156,11 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     for (h=0;h<n_threads;h++) {
       pthread_join(threads[h],NULL);
     }
-    */
+    
+
+    //gpu_loopy_V_F(&targs[0]);
     /* calculate variable to factor messages */
+    
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h], NULL, (void*) _loopyCPU__VtoF, &targs[h]);
     }
@@ -252,7 +255,8 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	    cop=co_pairs[m];
 	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
 	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
-	    co=origin+com[m] + 2*(m-n) + n_factors*2; //what's the 2*(m-n) for?????
+	    co=origin+com[m] + 2*(m) + n_factors*2; //what's the 2*(m-n) for?????
+	    //co=origin+com[m] + 2*(m-n) + n_factors*2; //what's the 2*(m-n) for?????
 	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
 
@@ -278,8 +282,9 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	    cop=co_pairs[m-n_factors];
 	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
 	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
-	    co=origin+rom[m-n_factors] + 2*(m-n);
-	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	    co=origin+rom[m-n_factors] + 2*(m - n_factors);
+	    //co=origin+rom[m-n_factors] + 2*(m - n);
+	    if (!(co < 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
 	      F_V[co+1] = r3[2*(m-n)+1];
 	    }
@@ -313,7 +318,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   f32 stop_thresh=lpar->stop_thresh;
   
   f32 * V_data=self->V_data;
-  f32 * unary= self->unary;
+  f32 * unary = self->unary;
   
   npy_intp x,y;
   i64 m,n,depth=self->depth,co;
@@ -325,15 +330,14 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   f32 *mu = l_args->mu;
 
   /* coordinates */
-  i32 *com=l_args->com;
-  i32 *rom=l_args->rom;
+
   om_pair *co_pairs=l_args->co_pairs;
 
   /* runtime Flags*/
   i32 *converged = l_args->converged;
   
   i32 origin;
-  f32 *RE = l_args->RE, *CE = l_args->CE;
+
   f32 tmp[2];
 
     __m256 r1,r2,r3,r4;
@@ -424,6 +428,23 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
     *converged=0;
    
   }
- loopyVtoFstop:
+ loopyVtoFstop:;
+  
+  i32 *ret=lpar->EY;
+  for (x=0;x<dims[0];x++) {
+    for (y=0;y<dims[1];y++) {
+      origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
+      assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
+      if (marginals[origin] > marginals[origin+1]) {
+	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
+      }
+      else{
+	ret[COORD2(x,y,dims[0],dims[1],1)]=1;
+
+      }
+    }
+
+  }
+
   return NULL;
 }
