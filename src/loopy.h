@@ -28,6 +28,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
 
 static void * _loopyCPU__FtoV(loopycpu_t *l_args);
 static void * _loopyCPU__VtoF(loopycpu_t *l_args);
+static void * _loopy_label(loopycpu_t *l_args);
 #endif
 
 #endif

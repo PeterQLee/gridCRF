@@ -11,7 +11,7 @@ setup_kwargs={
     'extra_objects':['build/gpu/loopy_gpu.o', 'build/gpu/loopy_gpu_link.o']#,'build/gpu/loopy_gpu_dlink.o']
 }
 
-#os.system('make')
+os.system('make')
 setup(name="BoardPy", version="1.0",
       include_dirs= [np.get_include(),'src/'],
       ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c", "src/loopy.c"],**setup_kwargs)

@@ -146,7 +146,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     converged = 1;
     
     /* Calculate factor to variable messages */
-    //gpu_loopy_F_V(&targs[0]);
+
 
     
     for (h=0;h<n_threads;h++) {
@@ -157,8 +157,6 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
       pthread_join(threads[h],NULL);
     }
     
-
-    //gpu_loopy_V_F(&targs[0]);
     /* calculate variable to factor messages */
     
     for (h=0;h<n_threads;h++) {
@@ -171,7 +169,30 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
 
     if (converged) break;
   }
-    
+  for (h=0;h<n_threads;h++) {
+    pthread_create(&threads[h], NULL, (void*) _loopy_label, &targs[h]);
+  }
+
+  for (h=0;h<n_threads;h++) {
+    pthread_join(threads[h],NULL);
+  }
+
+  
+  _mm_free(F_V);
+  _mm_free(V_F);
+  free(start);
+  free(stop);
+  _mm_free(marginals);
+  free(com);
+  free(rom);
+  free(co_pairs);
+  _mm_free(RE);
+  _mm_free(CE);
+  free(threads);
+  free(targs);
+  
+  
+  
 }
 
 static void * _loopyCPU__FtoV(loopycpu_t *l_args){
@@ -196,7 +217,7 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
   
   npy_intp x,y;
   i64 m,n,depth=self->depth,i,j,co;
-  i32 l;
+  i32 l=1;
 
   f32 *F_V = l_args->F_V;
   f32 *V_F = l_args->V_F;
@@ -428,11 +449,23 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
     *converged=0;
    
   }
- loopyVtoFstop:;
-  
+ loopyVtoFstop:
+  return NULL;
+}
+
+
+void *_loopy_label(loopycpu_t *l_args) {
+  loopy_params_t * lpar = l_args->lpar;
+  npy_intp * dims= PyArray_DIMS(l_args->X);
   i32 *ret=lpar->EY;
-  for (x=0;x<dims[0];x++) {
-    for (y=0;y<dims[1];y++) {
+  f32 *marginals=l_args->marginals;
+  i32 * start = l_args->start;
+  i32 * stop = l_args->stop;
+  i32 i,j,x,y;
+  i32 origin;
+  for (x=start[0];x<dims[0];x++) {
+    for (y=start[1];y<dims[1];y++) {
+      if (x==stop[0] && y==stop[1]) goto loopyLabelstop;
       origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
       assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
       if (marginals[origin] > marginals[origin+1]) {
@@ -445,6 +478,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
     }
 
   }
-
+ loopyLabelstop:
   return NULL;
+
 }

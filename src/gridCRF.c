@@ -606,7 +606,13 @@ static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_
   gradargs.n_factors=n_factors;
   gradargs.alpha=alpha;
   //gradargs.loopy_func=&_loopyCPU;
-  gradargs.loopy_func=&loopyCPU;
+  if (tpt.gpu) {
+    gradargs.loopy_func=&loopyGPU;
+  }
+  else{
+    gradargs.loopy_func=&loopyCPU;
+  }
+  
   gradargs.lpar=&lpar;
 
   #define N_THREADS 1
@@ -826,7 +832,8 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyA
 	    cop=co_pairs[m];
 	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
 	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
-	    co=origin+com[m] + 2*(m-n) + n_factors*2;
+	    co=origin+com[m] + 2*(m) + n_factors*2;
+	    //co=origin+com[m] + 2*(m-n) + n_factors*2;
 	    
 	      
 	    //((f64*)&F_V)[com[m]] = ((f64*)&r3)[m-n];
@@ -856,9 +863,11 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyA
 	    cop=co_pairs[m-n_factors];
 	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
 	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
-	    co=origin+rom[m-n_factors] + 2*(m-n);
+	    //co=origin+rom[m-n_factors] + 2*(m-n);
+	    co=origin+rom[m-n_factors] + 2*(m-n_factors);
+
 	    //((f64*)F_V)[origin+rom[m-n_factors]] = ((__m256d) r3)[m-n];
-	    if (!(origin+rom[m-n_factors] + 2*(m-n) < 0 || origin+rom[m-n_factors] + 2*(m-n) >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	    if (!(co < 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
 	      F_V[co] = r3[2*(m-n)];
 	      //printf("mxy %d %d %d %f %d %d %d %d %d %d\n", m,x,y, r3[2*(m-n)], co, x-cop.x,y-cop.y,2*(m-n),rom[m-n_factors], origin);
 	      F_V[co+1] = r3[2*(m-n)+1];
@@ -999,11 +1008,12 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   train_params_t tpt;
   tpt.epochs=100;
   tpt.alpha=0.001f;
-  static char * kwlist[] = {"train","lab","epochs","alpha",NULL};
+  tpt.gpu=0;
+  static char * kwlist[] = {"train","lab","epochs","alpha", "gpuflag",NULL};
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|if",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha))) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifi",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.gpu))) return NULL;
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) return NULL;
   if (!PyList_Check(lab)) return NULL;
@@ -1050,10 +1060,12 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   lpar.stop_thresh=0.01f;
   lpar.max_its=100;
   lpar.eval=1;
+  lpar.n_threads=8;
 
+  i32 gpuflag = 0;
 
-  static char * kwlist []= {"X","stop_thresh","max_its","refimg",NULL};
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fiO",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&refimg)) return NULL;
+  static char * kwlist []= {"X","stop_thresh","max_its","refimg", "gpuflag" ,NULL};
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fiOi",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&refimg, &gpuflag)) return NULL;
   if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 || PyArray_DIMS(test)[2] !=2) return NULL;
   if (PyArray_TYPE(test) != NPY_FLOAT32) {
     PyErr_SetString(PyExc_TypeError, "Data must be 32-bit floats");
@@ -1064,8 +1076,14 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   out=PyArray_SimpleNew(2, PyArray_DIMS(test), NPY_INT32);
   
   lpar.EY=PyArray_DATA(out);
-  
-  _loopyCPU(self,test,&lpar,refimg);
+
+  if (gpuflag) {
+    loopyGPU(self,test,&lpar,refimg);
+  }
+  else{
+    _loopyCPU(self,test,&lpar,refimg);
+    //_loopyCPU(self,test,&lpar,refimg);
+  }
   
   //return Py_BuildValue("");
   return out;

@@ -10,7 +10,7 @@ have one block take care of factor index 1 for a portion of variables.
 
 */
 
-void loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lpar,PyArrayObject *refimg){
+extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lpar,PyArrayObject *refimg){
   npy_intp * dims= PyArray_DIMS(X_py);
   i64 n_factors=self->n_factors;
   i64 max_it=lpar->max_its,it;
@@ -179,10 +179,14 @@ void loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lpar,PyArrayO
   targs._converged = &_converged;
 
   for (it = 0; it < max_it; i++){
+    if (it%1==0){
+      printf("gpu it %d\n", it);
+    }
     gpu_loopy_F_V(&targs);
     gpu_loopy_V_F(&targs);
     if (_converged) break;
   }
+  printf("converged %d %f\n",_converged, lpar->stop_thresh);
 
   i32 *EY;
   cudaMalloc(&EY, dims[0]*dims[1]*sizeof(f32));
@@ -214,12 +218,14 @@ void loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lpar,PyArrayO
   cudaFree(X);
   cudaFree(converged);
   cudaFree(EY);
+
+  return lpar->EY;
 }
 
 
 extern "C" void gpu_loopy_F_V(loopygpu_t *targs) { 
 
-  npy_intp * dims= PyArray_DIMS(targs->X);
+  npy_intp * dims= PyArray_DIMS(targs->X_py);
   gridCRF_t *self = targs->self;
   
   i32 n_factors=self->n_factors;
@@ -262,12 +268,12 @@ __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * ref
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 n = threadIdx.x;
-  //Note, may need to swap blockDim.x and blockDim.y
+  //Note, may need to swap gridDim.x and gridDim.y
 
   /* Check bounds for upper factor */
   om_pair cop = co_pairs[n];
-  if ( ! (x+cop.x <0 || x+cop.x >= blockDim.x || y+cop.y < 0 || y+cop.y >=blockDim.y) ){//&& !(refimg[COORD2(x+cop.x,y+cop.y, blockDim.x, blockDim.y, 1)]==0)) {
-    i32 origin=COORD3(x,y,0,blockDim.x,blockDim.y,2*n_factors,2);
+  if ( ! (x+cop.x <0 || x+cop.x >= gridDim.x || y+cop.y < 0 || y+cop.y >=gridDim.y) ){//&& !(refimg[COORD2(x+cop.x,y+cop.y, gridDim.x, gridDim.y, 1)]==0)) {
+    i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,2);
     i32 co = origin + com[n] + 2*(n + n_factors);
   
     F_V[co] = RE[n*2] + V_F[origin] > RE[n_factors*2 + n*2] + V_F[origin+1] ? RE[n*2] + V_F[origin] : RE[n_factors*2 + n*2] + V_F[origin+1];
@@ -286,8 +292,8 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
   /* Check bounds for upper factor */
   om_pair cop=co_pairs[n];
   /* Check bounds for lower factor */
-  if (!(x-cop.x < 0 || x-cop.x >= blockDim.x || y-cop.y < 0 || y-cop.y >=blockDim.y)){// && !(refimg[COORD2(x-cop.x,y-cop.y, blockDim.x, blockDim.y, 1)]==0)) {
-    i32 origin=COORD3(x,y,0,blockDim.x,blockDim.y,2*n_factors,2);
+  if (!(x-cop.x < 0 || x-cop.x >= gridDim.x || y-cop.y < 0 || y-cop.y >=gridDim.y)){// && !(refimg[COORD2(x-cop.x,y-cop.y, gridDim.x, gridDim.y, 1)]==0)) {
+    i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,2);
     //i32 co=origin + rom[n]; //check this
     i32 co = origin+rom[n] + 2*n;
     F_V[co] = CE[n*2] + V_F[origin] > CE[n_factors*2 + n*2] + V_F[origin+1] ?
@@ -326,19 +332,25 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   /* runtime Flags*/
   i32 *converged = targs->converged;
   
-  const i32 n_streams = 6;
+  const i32 n_streams = 1;
   cudaStream_t stream[n_streams];
   for (i=0;i<n_streams;i++) {
     cudaStreamCreate(&stream[i]);
   }
   
   i32 tmp=1;
-  cudaMemcpyAsync(&tmp,converged, sizeof(i32),cudaMemcpyHostToDevice,stream[5]);
+  cudaMemcpyAsync(&tmp,converged, sizeof(i32),cudaMemcpyHostToDevice,stream[0]);
 
   for (i=0;i<n_streams;i++) {
     cudaStreamSynchronize(stream[i]);
   }
-
+  #define DEBUG
+  #ifdef DEBUG
+  f32 *oldmu = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
+  f32 *newmu = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
+  cudaMemcpy(oldmu, mu, sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
+  #endif
+  
   dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
@@ -349,14 +361,30 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);
   }
-  
-  /* Temporary, only for CPU TESTING*/
-  // cudaMemcpy(targs->V_F, V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyDeviceToHost);
+
+  #ifdef DEBUG
+  i32 rip =0;
+  cudaMemcpy(newmu, mu, sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
+  for (i=0;i<dims[0]*dims[1]*2 && !rip;i++) {
+    if (fabsf(oldmu[i]-newmu[i]) > stop_thresh){
+      printf("WTF");
+      rip=1;
+    }
+    if (isnan(oldmu[i]) || isnan(newmu[i])){
+      printf("We have a nan\n");
+      rip=1;
+    }
+    //printf("%f ",oldmu[i]-newmu[i]);
+  }
+  if (rip) {
+    printf("\n\n");
+  }
+
+  #endif
   cudaMemcpy(targs->_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
-  // cudaMemcpy(targs->mu, mu, dims[0]*dims[1]*2*sizeof(f32), cudaMemcpyDeviceToHost);
+  
 
-
-
+ 
 }
 
 __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c){
@@ -364,9 +392,9 @@ __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c)
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
 
-  unary_c[COORD2(x,y,blockDim.x, blockDim.y, 2) + c] = \
-    X[COORD2(x,y,blockDim.x, blockDim.y, 2)] * unary_w[c*2] +	\
-    X[COORD2(x,y,blockDim.x, blockDim.y, 2) + 1] * unary_w[c*2 + 1];
+  unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = \
+    X[COORD2(x,y,gridDim.x, gridDim.y, 2)] * unary_w[c*2] + \
+    X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1];
     
 }
 
@@ -380,12 +408,12 @@ __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, cons
   i32 n = threadIdx.x;
   i32 c = threadIdx.y;
   i32 i=0;
-  i32 origin = COORD3(x,y,n,blockDim.x, blockDim.y, 2*n_factors, 2) + c;
+  i32 origin = COORD3(x,y,n,gridDim.x, gridDim.y, 2*n_factors, 2) + c;
   // load factor to vvariables into shared memory
   shared_f_v[n*2 + c] = F_V[origin];
 
   //TODO: make unary a constant?
-  f32 sum = unary_c[COORD2(x,y,blockDim.x,blockDim.y,2) + c] - shared_f_v[n*2+c];
+  f32 sum = unary_c[COORD2(x,y,gridDim.x,gridDim.y,2) + c] - shared_f_v[n*2+c];
   __syncthreads();
 
 
@@ -409,16 +437,16 @@ __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 
   i32 c = threadIdx.x;
 
   i32 i;
-  i32 origin = COORD2(x,y,blockDim.x, blockDim.y, 2) + c;
+  i32 origin = COORD2(x,y,gridDim.x, gridDim.y, 2) + c;
   f32 sum = unary_c[origin];
 
   // sum up factors
   for (i=0;i<n_factors*2;i++) {
-    sum += F_V[COORD3(x,y,i,blockDim.x, blockDim.y, 2*n_factors, 2) + c];
+    sum += F_V[COORD3(x,y,i,gridDim.x, gridDim.y, 2*n_factors, 2) + c];
   }
 
   if (fabsf(sum - mu[origin]) > stop_thresh) {
-    *converged = 0;
+    converged[0] = 0;
   }
   mu[origin] = sum;
 }
@@ -432,17 +460,17 @@ __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_fac
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
-  i32 origin = COORD2(x,y,blockDim.x, blockDim.y, 2) + c;
+  i32 origin = COORD2(x,y,gridDim.x, gridDim.y, 2) + c;
 
   f32 sum = unary_c[origin];
   // sum up factors
   for (i=0;i<n_factors*2;i++) {
-    sum += F_V[COORD3(x,y,i,blockDim.x, blockDim.y, 2*n_factors, 2) + c];
+    sum += F_V[COORD3(x,y,i,gridDim.x, gridDim.y, 2*n_factors, 2) + c];
   }
   shared_marginal[c] = sum;
   __syncthreads();
   if (shared_marginal[c] > shared_marginal[c^1]) {
-    EY[COORD2(x,y,blockDim.x, blockDim.y, 1)] = 1;
+    EY[COORD2(x,y,gridDim.x, gridDim.y, 1)] = 1;
   }
   
 }

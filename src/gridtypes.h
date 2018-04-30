@@ -62,6 +62,7 @@ typedef struct {
 typedef struct{
   i32 epochs;
   f32 alpha;
+  i32 gpu;
 }train_params_t;
 
 #endif

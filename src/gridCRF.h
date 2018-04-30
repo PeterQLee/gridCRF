@@ -13,6 +13,7 @@
 #include <lbfgs.h>
 #include "gridtypes.h"
 #include "loopy.h"
+#include "loopy_gpu.h"
 
 
 static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step);

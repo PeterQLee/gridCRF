@@ -1,7 +1,6 @@
 #ifndef LOOPY_GPU_CU_H
 #define LOOPY_GPU_CU_H
 #include "loopy.h"
-#define STOP_THRESH 0.01
 
 typedef struct{
   /* coordinates */
