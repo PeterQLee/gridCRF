@@ -38,3 +38,42 @@ F_V are overflowing
 * GPU Loopy
 ** Got F_V working exactly the same as CPU
 See /mnt/D2/crf_experiments for comparison 
+
+
+* Results
+gpu: 1st iteration
+
+mu
+F_V
+V_F: 50*100*2*4*2 +50*2*4*2 -> 0
+
+** GPU profiling for test5.py, factor =4
+==6244== Profiling application: python3 test5.py
+==6244== Profiling result:
+Time(%)      Time     Calls       Avg       Min       Max  Name
+ 36.75%  4.54263s      9907  458.53us  453.86us  566.76us  gpu_loopy_V_F__sumfactors
+ 27.10%  3.34978s      9907  338.12us  321.00us  774.95us  gpu_loopy_V_F__marginal
+ 16.93%  2.09239s      9907  211.20us  206.53us  449.77us  gpu_loopy_F_V__Flow
+ 14.66%  1.81256s      9907  182.96us  180.19us  228.04us  gpu_loopy_F_V__Fup
+  2.62%  323.57ms      9907  32.660us  31.360us  42.496us  gpu_loopy_V_F__computeunary
+  1.62%  200.44ms     10917  18.360us     480ns  1.5409ms  [CUDA memcpy HtoD]
+  0.26%  32.231ms       101  319.12us  313.19us  445.09us  gpu_loopy_V_F__label
+  0.07%  8.7026ms     10008     869ns     352ns  15.968us  [CUDA memcpy DtoH]
+
+==6244== API calls:
+Time(%)      Time     Calls       Avg       Min       Max  Name
+ 89.31%  11.7723s     10008  1.1763ms  328.46us  1.8561ms  cudaMemcpy
+  2.12%  279.83ms     30731  9.1050us     896ns  209.01ms  cudaStreamCreate
+  2.11%  278.25ms     49636  5.6050us  3.2440us  470.95us  cudaLaunch
+  2.03%  268.02ms     10917  24.550us  2.9880us  1.6557ms  cudaMemcpyAsync
+  1.29%  169.51ms      1313  129.10us  4.3480us  737.10us  cudaMalloc
+  1.26%  165.70ms     10917  15.178us     682ns  1.1157ms  cudaStreamSynchronize
+  0.73%  96.158ms     30731  3.1290us  1.2900us  115.27us  cudaStreamDestroy
+  0.70%  91.894ms      1313  69.988us  3.7750us  458.14us  cudaFree
+  0.36%  47.684ms    277800     171ns     115ns  539.37us  cudaSetupArgument
+  0.08%  10.821ms     49636     218ns     125ns  124.66us  cudaConfigureCall
+  0.00%  587.83us        91  6.4590us     164ns  270.95us  cuDeviceGetAttribute
+  0.00%  92.346us         1  92.346us  92.346us  92.346us  cuDeviceTotalMem
+  0.00%  41.288us         1  41.288us  41.288us  41.288us  cuDeviceGetName
+  0.00%  1.7350us         3     578ns     202ns  1.2590us  cuDeviceGetCount
+  0.00%     831ns         3     277ns     211ns     399ns  cuDeviceGet

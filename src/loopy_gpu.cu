@@ -1,7 +1,14 @@
 extern "C" {
 #include "loopy_gpu_cu.h"
 }
-#define CPU_TEST
+
+//#define CPU_TEST
+
+#ifdef CPU_TEST
+void __debug_loopy_V_F(loopygpu_t *targs);
+void *_loopy_label(loopygpu_t *l_args);
+#endif
+  
 /* 
 Optimization strats:
 1. Split F_V so that it can take advantage of constant memory for offset coordinates. This can speed up execution possibly.
@@ -117,8 +124,8 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lp
   cudaMalloc(&F_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32));
   cudaMalloc(&V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32));
 
-  cudaMemcpyAsync(_F_V, F_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice, stream[0]);
-  cudaMemcpyAsync(_V_F, V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice, stream[1]);
+  cudaMemcpyAsync(F_V, _F_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice, stream[0]);
+cudaMemcpyAsync(V_F,_V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice, stream[1]);
 
   /* Allocate coordinate system*/
   i32 *com, *rom;
@@ -127,32 +134,33 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lp
   cudaMalloc(&rom, sizeof(i32)*n_factors);
   cudaMalloc(&co_pairs,sizeof(om_pair)*n_factors);
 
-  cudaMemcpyAsync(_com, com, n_factors* sizeof(i32), cudaMemcpyHostToDevice, stream[2]);
-  cudaMemcpyAsync(_rom, rom, n_factors* sizeof(i32), cudaMemcpyHostToDevice, stream[3]);
-  cudaMemcpyAsync(_co_pairs, co_pairs, n_factors* sizeof(om_pair), cudaMemcpyHostToDevice, stream[4]);
+  cudaMemcpyAsync(com, _com, n_factors* sizeof(i32), cudaMemcpyHostToDevice, stream[2]);
+  cudaMemcpyAsync(rom, _rom, n_factors* sizeof(i32), cudaMemcpyHostToDevice, stream[3]);
+  cudaMemcpyAsync(co_pairs, _co_pairs, n_factors* sizeof(om_pair), cudaMemcpyHostToDevice, stream[4]);
 
   f32 *RE, *CE;
   cudaMalloc(&RE, 2* n_factors *2* sizeof(f32));
   cudaMalloc(&CE, 2* n_factors *2* sizeof(f32));
-  cudaMemcpyAsync(_RE, RE, 2*n_factors*2*sizeof(f32), cudaMemcpyHostToDevice, stream[5]);
-  cudaMemcpyAsync(_CE, CE, 2*n_factors*2*sizeof(f32), cudaMemcpyHostToDevice, stream[6]);
+  cudaMemcpyAsync(RE, _RE, 2*n_factors*2*sizeof(f32), cudaMemcpyHostToDevice, stream[5]);
+  cudaMemcpyAsync(CE, _CE, 2*n_factors*2*sizeof(f32), cudaMemcpyHostToDevice, stream[6]);
 
   f32 *unary_w, *unary_c;
   cudaMalloc(&unary_w, 4 * sizeof(f32));
-  cudaMemcpyAsync(_unary_w, unary_w, 4*sizeof(f32), cudaMemcpyHostToDevice, stream[7]);
+  cudaMemcpyAsync(unary_w, _unary_w, 4*sizeof(f32), cudaMemcpyHostToDevice, stream[7]);
     
   cudaMalloc(&unary_c, dims[0]*dims[1]*2*sizeof(f32));
 
   
   f32 *mu;
   cudaMalloc(&mu, dims[0]*dims[1]*2*sizeof(f32));
-  cudaMemcpyAsync(_mu, mu, dims[0]*dims[1]*2*sizeof(f32), cudaMemcpyHostToDevice, stream[8]);
+  cudaMemcpyAsync(mu, _mu, dims[0]*dims[1]*2*sizeof(f32), cudaMemcpyHostToDevice, stream[8]);
 
   f32 *X;
   cudaMalloc(&X, dims[0]*dims[1]*2*sizeof(f32));//tmp
-  cudaMemcpyAsync(X_py->data, X, dims[0]*dims[1]*2*sizeof(f32), cudaMemcpyHostToDevice, stream[9]);
+  cudaMemcpyAsync(X, X_py->data, dims[0]*dims[1]*2*sizeof(f32), cudaMemcpyHostToDevice, stream[9]);
 
   for (i=0;i<n_streams;i++) {
+    cudaStreamSynchronize(stream[i]);
     cudaStreamDestroy(stream[i]);
   }
   
@@ -178,16 +186,29 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lp
   targs.converged = converged;
   targs._converged = &_converged;
 
-  for (it = 0; it < max_it; i++){
-    if (it%1==0){
+
+  //DELETE THIS
+  targs._F_V=_F_V;
+  targs._V_F=_V_F;
+  targs._mu=_mu;
+  targs._unary=_unary_w;
+  //
+  for (it = 0; it < max_it; it++){
+    if (it%10==0){
       printf("gpu it %d\n", it);
     }
     gpu_loopy_F_V(&targs);
+    #ifndef CPU_TEST
     gpu_loopy_V_F(&targs);
+    #else
+    __debug_loopy_V_F(&targs);
+    #endif
+    
     if (_converged) break;
   }
   printf("converged %d %f\n",_converged, lpar->stop_thresh);
 
+  #ifndef CPU_TEST
   i32 *EY;
   cudaMalloc(&EY, dims[0]*dims[1]*sizeof(f32));
   
@@ -195,8 +216,12 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lp
   dim3 singGrid(2);
   gpu_loopy_V_F__label<<<dimGrid, singGrid, 2*sizeof(f32)>>>(F_V, unary_c, EY, n_factors);
 
-  cudaMemcpy(lpar->EY, EY, dims[0]*dims[1]*sizeof(f32), cudaMemcpyDeviceToHost);
-
+  cudaMemcpy(lpar->EY, EY, dims[0]*dims[1]*sizeof(i32), cudaMemcpyDeviceToHost);
+  #else
+  _loopy_label(&targs);
+  #endif
+  
+  
  cleanup:
   _mm_free(_F_V);
   _mm_free(_V_F);
@@ -212,12 +237,15 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py,loopy_params_t *lp
   cudaFree(rom);
   cudaFree(co_pairs);
   cudaFree(RE);
+  cudaFree(CE);
   cudaFree(unary_w);
   cudaFree(unary_c);
   cudaFree(mu);
   cudaFree(X);
   cudaFree(converged);
+#ifndef CPU_TEST
   cudaFree(EY);
+#endif
 
   return lpar->EY;
 }
@@ -308,6 +336,8 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
 
 
 extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
+
+
   //TODO:
   // - copy X to gpu
 
@@ -339,12 +369,12 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   }
   
   i32 tmp=1;
-  cudaMemcpyAsync(&tmp,converged, sizeof(i32),cudaMemcpyHostToDevice,stream[0]);
+  cudaMemcpyAsync(converged, &tmp, sizeof(i32),cudaMemcpyHostToDevice,stream[0]);
 
   for (i=0;i<n_streams;i++) {
     cudaStreamSynchronize(stream[i]);
   }
-  #define DEBUG
+//#define DEBUG
   #ifdef DEBUG
   f32 *oldmu = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
   f32 *newmu = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
@@ -382,26 +412,25 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
 
   #endif
   cudaMemcpy(targs->_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
-  
-
  
 }
 
 __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c){
+    // one possibility. X is not aligned properly.
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
 
-  unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = \
+  unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = -(	    \
     X[COORD2(x,y,gridDim.x, gridDim.y, 2)] * unary_w[c*2] + \
-    X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1];
+      X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1]);
     
 }
 
 __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, const i32 * refimg, i32 n_factors ){
   extern __shared__ char array[];
   f32 *shared_f_v = (f32*) array;
-  f32 *shared_v_f = (f32*) array + sizeof(f32)*n_factors*2*2;
+  f32 *shared_v_f = (f32*) (array + sizeof(f32)*n_factors*2*2);
 
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
@@ -418,14 +447,15 @@ __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, cons
 
 
   /* Sum up all messages */
-  for (i=0;i<n_factors;i++) {
-    sum += shared_f_v[i*2+c];
+  for (i=0;i<2*n_factors;i++) {
+//printf("KEK %d\n", i*2+c);
+    sum += shared_f_v[i*2+c]; //this is the problem!
   }
   shared_v_f[n*2+c]=sum;
   
   __syncthreads();  
   // Normalize values
-  sum = sum - 0.5 * (sum+shared_v_f[n*2+c]);
+  sum = sum - 0.5 * (sum+shared_v_f[n*2+c^1]);
   V_F[origin]=sum;
   
 }
@@ -451,8 +481,9 @@ __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 
   mu[origin] = sum;
 }
 
-  
+//TODO: change to mu instead
 __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_factors) {
+
   /* Computes the predicted label given the values */
   extern __shared__ char array[];
   f32 *shared_marginal = (f32*) array;
@@ -469,8 +500,180 @@ __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_fac
   }
   shared_marginal[c] = sum;
   __syncthreads();
-  if (shared_marginal[c] > shared_marginal[c^1]) {
+  if (c==0  && shared_marginal[0] > shared_marginal[1]) {
+    EY[COORD2(x,y,gridDim.x, gridDim.y, 1)] = 0;
+  }
+  else if (c==0) {
     EY[COORD2(x,y,gridDim.x, gridDim.y, 1)] = 1;
   }
   
 }
+
+
+
+
+
+#ifdef CPU_TEST
+
+
+
+void __debug_loopy_V_F(loopygpu_t *targs) {
+
+  /* Compute factor to variable messages */
+  i32 WARN_FLAG=1;
+  i32 i,j;
+  gridCRF_t *self = targs->self;
+  PyArrayObject *X = targs->X_py;
+  loopy_params_t * lpar = targs->lpar;
+  
+  f32 a,b;
+  npy_intp * dims= PyArray_DIMS(X);
+  i64 n_factors=self->n_factors;
+  f32 stop_thresh=lpar->stop_thresh;
+  
+  f32 * unary = self->unary;
+  
+  npy_intp x,y;
+  i32 n;
+
+
+  f32 *F_V = targs->_F_V;
+  f32 *V_F = targs->_V_F;
+
+  f32 *gF_V = targs->F_V;
+  f32 *gV_F = targs->V_F;
+
+  cudaMemcpy(F_V, gF_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyDeviceToHost);
+  cudaMemcpy(V_F, gV_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyDeviceToHost);
+  
+  
+  f32 *marginals = (f32*) _mm_malloc(sizeof(f32)*dims[0]*dims[1]*2,32);
+  f32 *mu = targs->_mu;
+
+  /* coordinates */
+
+  /* runtime Flags*/
+  i32 *converged = targs->_converged;
+  
+  i32 origin;
+
+  f32 tmp[2];
+
+  __m256 r1,r2;
+  /* Compute variable to factor messages */
+  for (x=0;x<dims[0];x++) {
+    for (y=0;y<dims[1];y++) {
+      //variable to factor messages
+      
+      f64 base= *((f64*)PyArray_GETPTR3(X,x,y,0));
+      *((f64*)tmp) = base;
+      tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
+      tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
+      r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
+      //Warning: possible segfault
+	
+      for (n=0;n<n_factors*2;n+=4) { //Set baseline, since we know that unary is added to each V_F
+	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
+      }
+      
+      for (i=0;i<n_factors*2;i++) {
+	base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
+	r1=(__m256)_mm256_set1_pd(base);
+	for (n=0;n<n_factors*2;n+=4) {
+	  r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	  r2=_mm256_add_ps(r2,r1);
+	  _mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
+	}
+      }
+      for (n=0;n<n_factors*2;n+=8) { //correct double counting
+	r1=_mm256_load_ps(&F_V[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	r2=_mm256_sub_ps(r2,r1);
+	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
+      }
+
+      /*
+      //TODO: normalize
+      //This is SSE normalization. Unless more knowledge is gained, it would be slower to use these than individually going over each value.
+      */
+	
+      //Apply normalization
+      for (n=0;n<n_factors*2;n++) {
+	//TODO: optimize
+	a=V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)];
+	b=V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)+1];
+	a=0.5*(a+b);
+	V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]-=a;
+	V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)+1]-=a;
+      }
+	
+      //TODO:Add to marginals
+      origin=COORD2(x,y,dims[0],dims[1],2);
+
+      assert (origin < dims[0]*dims[1]*2);
+
+      marginals[origin]=tmp[0];
+      marginals[origin+1]=tmp[1];
+      for (i=0;i<n_factors*2;i++) {
+
+	assert(COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+ 1 < dims[0] * dims[1] * (n_factors*2) *2 && COORD3(x,y,n,dims[0],dims[1],2*n_factors,2) > 0);
+	marginals[origin]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]; // invalid read of 4
+	marginals[origin+1]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+1];
+	if (isnan(marginals[origin]) && WARN_FLAG) {
+	  printf("MARGINAL WARNING %d %d\n",x,y);
+	  for (j=0;j<n_factors*2;j++) {
+	    printf("%f %f\n",F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)],F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)+1]); // invalid read of 4
+	  }
+	  WARN_FLAG=0;
+	}
+      }
+      a=fabs(marginals[origin]-mu[origin]);
+      if (a > stop_thresh) {
+	*converged = 0;
+      }
+      a=fabs(marginals[origin+1]-mu[origin+1]);
+      if (a > stop_thresh) {
+	*converged = 0;
+      }
+
+      mu[origin]=marginals[origin];
+      mu[origin+1]=marginals[origin+1];
+      //TODO: calculate marginal
+    }
+  }
+
+  _mm_free(marginals);
+  cudaMemcpy(gF_V, F_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice);
+  cudaMemcpy(gV_F, V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice);
+}
+
+
+void *_loopy_label(loopygpu_t *l_args) {
+  loopy_params_t * lpar = l_args->lpar;
+  npy_intp * dims= PyArray_DIMS(l_args->X_py);
+  i32 *ret=lpar->EY;
+  f32 *mu=l_args->_mu;
+  i32 x,y;
+  i32 origin;
+  for (x=0;x<dims[0];x++) {
+    for (y=0;y<dims[1];y++) {
+   
+      origin=COORD2(x,y,dims[0],dims[1],2); 
+      assert(origin >= 0 && origin + 1 < dims[0]*dims[1]*2);
+      if (mu[origin] > mu[origin+1]) {
+	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
+      }
+      else{
+	ret[COORD2(x,y,dims[0],dims[1],1)]=1;
+
+      }
+    }
+
+  }
+
+  //cudaMemcpy(ret, gEY, dims[0] * dims[1] * sizeof(i32), cudaMemcpyHostToDevice);
+
+  return NULL;
+
+}
+#endif

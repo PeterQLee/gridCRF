@@ -25,8 +25,8 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   //f32 * F_V = (f32 *) calloc( dims[0] * dims[1] * (self->n_factors*2) *2, sizeof(f32));
   f32 * F_V = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
-  npy_intp *start = malloc(sizeof(npy_intp)*n_threads*2);
-  npy_intp *stop = malloc(sizeof(npy_intp)*n_threads*2);
+  i32 *start = malloc(sizeof(i32)*n_threads*2);
+  i32 *stop = malloc(sizeof(i32)*n_threads*2);
   
   for (i=0;i<dims[0] * dims[1] * (n_factors*2) *2; i++){
     F_V[i]=0.0f;
@@ -192,7 +192,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   free(targs);
   
   
-  
+  return lpar->EY;
 }
 
 static void * _loopyCPU__FtoV(loopycpu_t *l_args){
@@ -328,22 +328,19 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   i32 *start = l_args->start, *stop = l_args->stop;
   gridCRF_t *self = l_args->self;
   PyArrayObject *X = l_args->X;
-  PyArrayObject *refimg  = l_args->refimg;
   loopy_params_t * lpar = l_args->lpar;
   
   f32 a,b;
   npy_intp * dims= PyArray_DIMS(X);
   i64 n_factors=self->n_factors;
-  i64 max_it=lpar->max_its,it;
   f32 max_marg_diff=0.0f;
   f32 stop_thresh=lpar->stop_thresh;
   
-  f32 * V_data=self->V_data;
   f32 * unary = self->unary;
   
   npy_intp x,y;
-  i64 m,n,depth=self->depth,co;
-  i32 l;
+  i32 n;
+
 
   f32 *F_V = l_args->F_V;
   f32 *V_F = l_args->V_F;
@@ -352,8 +349,6 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
 
   /* coordinates */
 
-  om_pair *co_pairs=l_args->co_pairs;
-
   /* runtime Flags*/
   i32 *converged = l_args->converged;
   
@@ -361,7 +356,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
 
   f32 tmp[2];
 
-    __m256 r1,r2,r3,r4;
+  __m256 r1,r2;
   /* Compute variable to factor messages */
   max_marg_diff=0;
   for (x=start[0];x<dims[0];x++) {
@@ -445,10 +440,6 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
       //TODO: calculate marginal
     }
   }
-  if (max_marg_diff < stop_thresh) {
-    *converged=0;
-   
-  }
  loopyVtoFstop:
   return NULL;
 }
@@ -458,17 +449,17 @@ void *_loopy_label(loopycpu_t *l_args) {
   loopy_params_t * lpar = l_args->lpar;
   npy_intp * dims= PyArray_DIMS(l_args->X);
   i32 *ret=lpar->EY;
-  f32 *marginals=l_args->marginals;
+  f32 *mu=l_args->mu;
   i32 * start = l_args->start;
   i32 * stop = l_args->stop;
-  i32 i,j,x,y;
+  i32 x,y;
   i32 origin;
   for (x=start[0];x<dims[0];x++) {
     for (y=start[1];y<dims[1];y++) {
       if (x==stop[0] && y==stop[1]) goto loopyLabelstop;
       origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
       assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
-      if (marginals[origin] > marginals[origin+1]) {
+      if (mu[origin] > mu[origin+1]) {
 	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
       }
       else{
@@ -476,7 +467,6 @@ void *_loopy_label(loopycpu_t *l_args) {
 
       }
     }
-
   }
  loopyLabelstop:
   return NULL;

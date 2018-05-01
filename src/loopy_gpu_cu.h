@@ -20,6 +20,9 @@ typedef struct{
   i32 *converged;
   i32 *_converged;
 
+  f32 *_F_V, *_V_F, *_mu, *_unary;
+  
+
 }loopygpu_t;
   
 void gpu_loopy_F_V(loopygpu_t *targs);
