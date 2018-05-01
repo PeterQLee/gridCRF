@@ -29,6 +29,7 @@ typedef struct{
   PyArrayObject *V;
   f32 *V_data;
   f32 *unary;
+  i32 gpuflag;
   //i32 *com, *rom;
 }gridCRF_t;
 
@@ -46,7 +47,8 @@ typedef struct{
 typedef struct {
   gridCRF_t *self;
   f32 *V_change, *unary_change;
-  PyArrayObject *X, *Y, *EY;
+  PyObject *X_list, *Y_list;
+  PyArrayObject *EY;
   i32 *ainc, *binc;
   npy_intp * dims;
   npy_intp * start;
@@ -56,6 +58,7 @@ typedef struct {
   PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
   loopy_params_t *lpar;
   f32 L;
+  i32 *instance_index;
 }gradient_t;
 
 

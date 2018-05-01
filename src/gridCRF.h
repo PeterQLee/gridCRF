@@ -16,10 +16,10 @@
 #include "loopy_gpu.h"
 
 
-static lbfgsfloatval_t _lbfgs_update(void *args, const lbfgsfloatval_t *x, lbfgsfloatval_t *g, const int n, const lbfgsfloatval_t step);
+
 static void* _calculate_gradient(gradient_t *args);
 
-static void _train( gridCRF_t * self, PyArrayObject *X, PyArrayObject *Y, train_params_t tpt);
+static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t tpt);
 static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t *lpar,PyArrayObject *refimg);
 
 static PyObject* fit (gridCRF_t * self, PyObject *args, PyObject *kws);
