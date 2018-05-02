@@ -482,7 +482,12 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
 
   #define N_THREADS 1
 
-  grad_descent(&gradargs,epochs,N_THREADS);
+  if (self->gpuflag){
+    GPU_grad_descent(&gradargs,epochs);
+  }
+  else{
+    grad_descent(&gradargs,epochs,N_THREADS);
+  }
 
   //Values trained now
   printf("Done train");

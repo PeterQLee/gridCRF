@@ -20,11 +20,24 @@ typedef struct{
   i32 *converged;
   i32 *_converged;
 
-  f32 *_F_V, *_V_F, *_mu, *_unary;
   
 
 }loopygpu_t;
-  
+
+typedef struct{
+  i32 max_its;
+  f32 stop_thresh;
+  f32 *mu;
+  i32 eval;
+  i32 *EY;
+  i32 n_threads;
+  f32 *V_data, *V_F, *F_V, *mu, *RE, *CE;
+  i32 *com, *rom;
+  om_pair *co_pairs;
+    
+}gpu_loopy_params_t;
+
+
 void gpu_loopy_F_V(loopygpu_t *targs);
 void gpu_loopy_V_F(loopygpu_t *targs);
 
@@ -39,7 +52,7 @@ __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 
 
 __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_factors);
 
-__global__ void gpu_fill_BIG(f32 *buffer, f32 val);
-
+__global__ void gpu_fill_value(f32 *buffer, f32 val);
+__global__ void gpu_multiply(f32 *buffer, f32 val);
 #endif
 
