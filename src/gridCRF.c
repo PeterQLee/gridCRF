@@ -104,8 +104,6 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   f32 *V=(args->self)->V_data;
   pthread_t *threads= malloc(sizeof(pthread_t)*n_threads);
   npy_intp *dims=args->dims;
-  i32 *EY=_mm_malloc(sizeof(i32)*dims[0]*dims[1],32);
-  args->lpar->EY=EY;
   
   i32 num_params= args->num_params;
   i64 n_factors=args->n_factors;
@@ -114,44 +112,77 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   npy_intp *stop= malloc(sizeof(npy_intp)*n_threads*2);
   PyObject *X_list=args->X_list;
   f32 *V_change;
-  npy_intp s0=0;
-
   
+  npy_intp s0;
+
   /* Delegate which threads handle what*/
-  for (i=0;i<n_threads;i++ ){
-    memcpy(&targs[i],args,sizeof(gradient_t));
-    V_change=_mm_malloc(sizeof(f32)*(n_factors*4*2+N_UNARY),32);
-    targs[i].V_change=V_change;
-    targs[i].unary_change = &V_change[n_factors*4*2];
-    start[2*i]=s0/dims[1];
-    start[2*i+1]=s0%dims[1];
-    s0+=dims[0]*dims[1]/n_threads;
-    stop[2*i]=s0/dims[1];
-    stop[2*i+1]=s0%dims[1];
-    targs[i].start=&start[2*i];
-    targs[i].stop=&stop[2*i];
-    targs[i].instance_index= &j;
-  }
   
-  stop[n_threads*2-2]=dims[0];
-  stop[n_threads*2-1]=dims[1];
 
-  args->lpar->EY=EY;
+
   const f32 lr=0.01;
   f32 totL;
+  i32 n_samples = PyList_Size(X_list);
 
+  /* Allocate memory for threads */
+  f32 **V_change_l = (f32**) malloc(sizeof(f32*) * n_threads);
+  f32 **mu_l = (f32 **) malloc(sizeof(f32*) * n_samples);
+  f32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
+
+
+  for (j=0;j<n_samples;j++){
+    dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+    mu_l[j] = (f32*) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
+    EY_l[j] = (i32*) _mm_malloc(sizeof(i32)*dims[0]*dims[1],32); //These aren't getting set somewhere...
+    
+
+  }
   
-  for (i=0;i<epochs;i++) {
-    for (j=0;j<PyList_Size(X_list);j++){
+  for (h=0;h<n_threads;h++ ){
+    V_change_l[h] = _mm_malloc(sizeof(f32)*(n_factors*4*2+N_UNARY),32);
+  }
+  
 
-    // Do a loop iteration to get estimated outcomes with this parameterization
+  for (i=0;i<epochs;i++) {
+    for (j=0;j<n_samples;j++){
+      dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+      args->dims=dims;
+      s0=0;
+      // get threads ready
+      for (h=0;h<n_threads;h++ ){
+	memcpy(&targs[h],args,sizeof(gradient_t));// here!
+	targs[h].V_change=V_change_l[h];
+	targs[h].unary_change = &(V_change_l[h][n_factors*4*2]);
+	start[2*h]=s0/dims[1];
+	start[2*h+1]=s0%dims[1];
+	
+	s0+=dims[0]*dims[1]/n_threads;
+	
+	stop[2*h]=s0/dims[1];
+	stop[2*h+1]=s0%dims[1];
+	targs[h].start=&start[2*h];
+	targs[h].stop=&stop[2*h];
+	targs[h].instance_index= &j;
+	targs[h].lpar->mu=mu_l[j];
+	targs[h].lpar->EY=EY_l[j];
+
+      }
+      stop[n_threads*2-2]=dims[0];
+      stop[n_threads*2-1]=dims[1];
+
+      printf("EY_[l] %x\n", EY_l[j]);
+      args->lpar->mu=mu_l[j];//redundant
+      args->lpar->EY=EY_l[j];
+	
+      // Do a loop iteration to get estimated outcomes with this parameterization
       (*args->loopy_func)(args->self, (PyArrayObject *) PyList_GetItem(X_list,j), args->lpar, NULL);
+      
       for (h=0;h<n_threads;h++) {
-	pthread_create(&threads[h],NULL,(void*) _calculate_gradient,&targs[h]);
+	pthread_create(&threads[h], NULL, (void*) _calculate_gradient, &targs[h]);
       }
       for (h=0;h<n_threads;h++) {
-	pthread_join(threads[h],NULL);
+	pthread_join(threads[h], NULL);
       }
+      
       totL=0.0f;
       /* update params */
 #if L2
@@ -178,16 +209,27 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       }
 #endif
       printf("TOTL %f\n",totL);
+
+
     }
   }
-  for (i=0;i<n_threads;i++ ){
-    _mm_free(targs[i].V_change);
+
+  for (j=0;j<n_samples;j++) {
+    _mm_free(mu_l[j]);
+    _mm_free(EY_l[j]);
   }
+  free(mu_l);
+  free(EY_l);
+  for (h=0;h<n_threads;h++ ){
+    _mm_free(V_change_l[h]);
+  }
+  free(V_change_l);
+  
   free(targs);
   free(stop);
   free(start);
   free(threads);
-  _mm_free(EY);
+
 }
 static void* _calculate_gradient(gradient_t *args) {
   i32 i,j;
@@ -219,7 +261,7 @@ static void* _calculate_gradient(gradient_t *args) {
   printf("dims %d %d\n",dims[0],dims[1]);
   
   //PyArrayObject *EY = args->EY;
-  i32 *EY = args->EY;
+  i32 *EY = args->lpar->EY;
     
   for (i=start[0];i<dims[0];i++) {
     for (j=start[1];j<dims[1];j++) {
@@ -239,10 +281,11 @@ static void* _calculate_gradient(gradient_t *args) {
 	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]);
 
 	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
-	v=&V[n*4 + ((*l)&1)*2]; // 4x4 transfer matrix for n	
+	v=&V[n*4 + ((*l)&1)*2]; // 4x4 transfer matrix for n  
 	//We pick the row that corresponds to the outcome
 	//TODO: Improve with SSE
-	  
+
+	//uninitialized
 	yv[0] += v[0]; //(Dependent on function)
 	yv[1] += v[1];
       }
@@ -250,9 +293,11 @@ static void* _calculate_gradient(gradient_t *args) {
       for (n=0;n<n_factors;n++) {
 	if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
 	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
-	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
-	v=&V[n_factors*4 + n*4 + 2*((*l)&1)]; 
-	yv[0] += v[0];
+	l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
+
+	v=&V[n_factors*4 + n*4 + 2*((*l)&1)];
+	f32 test = v[0];
+	yv[0] += v[0];//uninitialized
 	yv[1] += v[1];
       }
       max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
@@ -312,8 +357,9 @@ static void* _calculate_gradient(gradient_t *args) {
 	//TODO: speed up (SSE) __m128 _mm_add_ps
 	//l=((i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]));
 	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
-	V_change[n*4 + 2*((*l)&1)] += change[0];
-	V_change[n*4 + 2*((*l)&1) + 1] += change[1];
+	V_change[n*4 + 2*((*l)&1)] += change[0]; //uninitalized
+	V_change[n*4 + 2*((*l)&1) + 1] += change[1]; 
+
       }
       
       for (n=0;n<n_factors;n++) {
@@ -321,8 +367,8 @@ static void* _calculate_gradient(gradient_t *args) {
 	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n+n_factors],j+binc[n+n_factors]);
 
 	l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
-	V_change[n_factors*4 +n*4 + 2*((*l)&1)] += change[0];
-	V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1];	  
+	V_change[n_factors*4 +n*4 + 2*((*l)&1)] += change[0]; //uninitalized
+	V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1]; //uninitliazed
       }
     }
 
@@ -339,7 +385,7 @@ static void* _calculate_gradient(gradient_t *args) {
 
 static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t tpt){
   #define NUM_UNARY 4
-  npy_intp * dims= PyArray_DIMS(X_list);
+
   i64 depth= self->depth;
   i32 i,j,n,a,b,d,k;
   i32 its, epochs=tpt.epochs;//epochs=1000;
@@ -347,7 +393,7 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
   f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+NUM_UNARY),32);
-  
+
   n=self->depth;
   //f64 *stack[self->n_factors ]; //TODO, preallocate this on heap.
   f32 *tmp;
@@ -399,9 +445,9 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
     }
   }
 
-  f32 * mu= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
+
   loopy_params_t lpar;
-  lpar.mu=mu;
+  lpar.mu=NULL;
   lpar.max_its=100;//100;
   lpar.stop_thresh=0.001;
   lpar.eval=1;
@@ -419,7 +465,7 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
   gradargs.ainc=ainc;
   gradargs.binc=binc;
   gradargs.unary_change=unary_change;
-  gradargs.dims=dims;
+  gradargs.dims=NULL;
   gradargs.num_params=num_params;
   gradargs.n_factors=n_factors;
   gradargs.alpha=alpha;
@@ -442,9 +488,6 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
   printf("Done train");
   free(ainc);
   free(binc);
-  _mm_free(mu);
-  
-
   
 }
 
@@ -788,7 +831,7 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifi",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha) )) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|if",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha) )) return NULL;
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) return NULL;
   if (!PyList_Check(lab)) return NULL;
@@ -820,7 +863,7 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
     }
   }
   
-  _train(self,(PyArrayObject*)train,(PyArrayObject*)lab,tpt);
+  CPU_train(self,(PyObject*)train,(PyObject*)lab,tpt);
 
   return Py_BuildValue("");  
 }

@@ -23,6 +23,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   i64 n,depth=self->depth,i,j,co,h;
   i32 l;
   //f32 * F_V = (f32 *) calloc( dims[0] * dims[1] * (self->n_factors*2) *2, sizeof(f32));
+  //TODO: put this in training section
   f32 * F_V = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   i32 *start = malloc(sizeof(i32)*n_threads*2);
@@ -120,7 +121,8 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     s0+=dims[0]*dims[1]/n_threads;
     stop[2*i]=s0/dims[1];
     stop[2*i+1]=s0%dims[1];
-    
+
+    printf("start %d %d\nstop %d %d\n",start[2*i], start[2*i+1], stop[2*i], stop[2*i+1]);
     targs[i].start=&start[2*i];
     targs[i].stop=&stop[2*i];
     targs[i].com=com;
@@ -146,9 +148,6 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     converged = 1;
     
     /* Calculate factor to variable messages */
-
-
-    
     for (h=0;h<n_threads;h++) {
       pthread_create(&threads[h], NULL, (void*) _loopyCPU__FtoV, &targs[h]);
     }
@@ -231,9 +230,9 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
   i32 origin;
   f32 *RE = l_args->RE, *CE = l_args->CE;
   __m256 r1,r2,r3,r4;
-  
+  y=start[1];
   for (x=start[0];x<dims[0];x++) {
-    for (y=start[1];y<dims[1];y++ ){
+    for (;y<dims[1];y++ ){
       if (x==stop[0] && y==stop[1]) goto loopyFtoVstop;
       	//factor to variable messages
 	//Make MS, energies + variable to factor messages..
@@ -313,6 +312,7 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	}
 	//luckily, # factors is guarunteed to be divisible by 4. So no worry about edge cases!
     }
+    y=0;
 
 
   }
@@ -359,8 +359,9 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   __m256 r1,r2;
   /* Compute variable to factor messages */
   max_marg_diff=0;
+  y=start[1];
   for (x=start[0];x<dims[0];x++) {
-    for (y=start[1];y<dims[1];y++) {
+    for (;y<dims[1];y++) {
       if (x==stop[0] && y==stop[1]) goto loopyVtoFstop;
       //variable to factor messages
       
@@ -439,6 +440,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
       mu[origin+1]=marginals[origin+1];
       //TODO: calculate marginal
     }
+    y=0;
   }
  loopyVtoFstop:
   return NULL;
@@ -454,11 +456,13 @@ void *_loopy_label(loopycpu_t *l_args) {
   i32 * stop = l_args->stop;
   i32 x,y;
   i32 origin;
+  printf("label start %d %d %d %d\n", start[0], start[1], stop[0], stop[1]);
+  y=start[1];
   for (x=start[0];x<dims[0];x++) {
-    for (y=start[1];y<dims[1];y++) {
-      if (x==stop[0] && y==stop[1]) goto loopyLabelstop;
+    for (;y<dims[1];y++) {
+      if (x==stop[0] && y==stop[1]) {goto loopyLabelstop;}
       origin=COORD2(x,y,dims[0],dims[1],2); // TODO define coord2
-      assert(origin >0 && origin + 1 < dims[0]*dims[1]*2);
+      assert(origin >= 0 && origin + 1 < dims[0]*dims[1]);
       if (mu[origin] > mu[origin+1]) {
 	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
       }
@@ -467,6 +471,7 @@ void *_loopy_label(loopycpu_t *l_args) {
 
       }
     }
+    y=0;
   }
  loopyLabelstop:
   return NULL;

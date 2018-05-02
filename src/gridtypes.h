@@ -6,9 +6,9 @@
 #include <structmember.h>
 #include <numpy/arrayobject.h>
 
-#define COORD4(dir,x,y,f,p,X,Y,NF) (dir*X*Y*NF*2 + x*Y*NF*2 + y*NF*2 + f*2 + p)
-#define COORD3(x,y,n, X,Y,NF,O ) (x*Y*NF*O + y*NF*O + n*O)
-#define COORD2(x,y,X,Y,O) (x*Y*O +y*O)
+#define COORD4(dir,x,y,f,p,X,Y,NF) ((dir)*(X)*(Y)*(NF)*(2) + (x)*(Y)*(NF)*(2) + (y)*(NF)*(2) + (f)*(2) + (p))
+#define COORD3(x,y,n, X,Y,NF,O ) ((x)*(Y)*(NF)*(O) + (y)*(NF)*(O) + (n)*(O))
+#define COORD2(x,y,X,Y,O) ((x)*(Y)*(O) +(y)*(O))
 
 
 
@@ -48,7 +48,6 @@ typedef struct {
   gridCRF_t *self;
   f32 *V_change, *unary_change;
   PyObject *X_list, *Y_list;
-  PyArrayObject *EY;
   i32 *ainc, *binc;
   npy_intp * dims;
   npy_intp * start;
