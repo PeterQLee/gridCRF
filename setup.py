@@ -8,7 +8,8 @@ setup_kwargs={
     'libraries': ['lbfgs','cudart', 'cudadevrt'],#, 'loopygpu'],
     'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],#, 'build/gpu/'],
     #'library_dirs':['/usr/local/lib','build/gpu'],
-    'extra_objects':['build/gpu/loopy_gpu.o', 'build/gpu/loopy_gpu_link.o']#,'build/gpu/loopy_gpu_dlink.o']
+    'extra_objects':['build/gpu/loopy_gpu.o','build/gpu/train_gpu.o', 'build/gpu/gpu_link.o',
+    ]
 }
 
 os.system('make')

@@ -3,7 +3,7 @@ extern "C" {
 }
 
 //#define CPU_TEST
-
+#define N_UNARY 4
 #ifdef CPU_TEST
 void __debug_loopy_V_F(loopygpu_t *targs);
 void *_loopy_label(loopygpu_t *l_args);
@@ -16,54 +16,228 @@ I.e.
 have one block take care of factor index 1 for a portion of variables.
 
 */
+extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_params_t *lpar, PyArrayObject *refimg) {
+  i32 i,j,h;
+  npy_intp *dims=PyArray_DIMS(X_py);
+  i32 depth = self->depth;
 
-extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_t *lpar, PyArrayObject *refimg){
-  npy_intp * dims= PyArray_DIMS(X_py);
-  i64 n_factors=self->n_factors;
-  i64 max_it=lpar->max_its,it;
+  gpu_loopy_params_t glpar;
+  glpar.max_its = lpar->max_its;
+  glpar.stop_thresh = lpar->stop_thresh;
+  glpar.eval = lpar->eval;
+
+  i32 n_factors=self->n_factors;
+  
+  f32 totL;
+  i32 n_samples = 1;
+  cudaError_t err = cudaSuccess;
 
   
-  f32 *V_data = lpar->V_data;
-  i64 n,depth=self->depth,i,j;
+  f32 **mu_l = (f32 **) malloc(sizeof(f32*) * n_samples);
+  i32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
 
+  f32 **X_l =  (f32 **) malloc(sizeof(f32*) * n_samples);
+  i32 **Y_l =  (i32 **) malloc(sizeof(i32*) * n_samples);
 
-  /* transfer matrices */
-  loopygpu_t targs;
-  // set up threads
-
+  //cuda streams
   const i32 n_streams = 10;
   cudaStream_t stream[n_streams];
   for (i=0;i<n_streams;i++) {
     cudaStreamCreate(&stream[i]);
   }
   
+  i32 curstream = 0;
+
+  /* parameters */
+  f32 * V_data;
+  cudaMalloc(&V_data, sizeof(f32)*(n_factors*8 + N_UNARY));//check this...
+  err=cudaMemcpyAsync(V_data, self->V_data, sizeof(f32)*(n_factors*8), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  
+  f32 *unary_w = V_data + n_factors*8;//sizeof(f32)*n_factors*8;
+  err=cudaMemcpyAsync(unary_w, self->unary, N_UNARY*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  
+  //TODO: copy V to V_data
+  for (j=0;j<n_samples;j++){
+    dims=PyArray_DIMS(X_py);
+    //allocate space
+    cudaMalloc(&mu_l[j],dims[0]*dims[1]*2*sizeof(f32));
+  
+    cudaMalloc(&EY_l[j],sizeof(i32)*dims[0]*dims[1]);
+  
+    cudaMalloc(&X_l[j], sizeof(f32)*dims[0]*dims[1]*2);
+    //Copy images to memory
+    err=cudaMemcpyAsync(X_l[j],PyArray_DATA(X_py),sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+  }
+
+  i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
+  i32 **rom_l = (i32**) malloc(sizeof(i32*)*n_samples);
+  om_pair **co_pairs_l = (om_pair**) malloc(sizeof(om_pair*)*n_samples);
+  
+  /* Prepare coordinates*/
+  i32 *_com=(i32*) malloc(sizeof(i32)*n_factors);
+  i32 *_rom=(i32*) malloc(sizeof(i32)*n_factors);
+  om_pair *_co_pairs=(om_pair*)malloc(sizeof(om_pair)*n_factors);
+  for (h=0;h<n_samples;h++) {
+    dims=PyArray_DIMS(X_py);
+
+
+    i32 n=0;
+    for (j=1;j<=depth;j++ ) {
+      for (i=0;i<j*4;i++) {
+	if (i<j) {
+	  _com[n]= -j *dims[1] * n_factors*2*2 - i*n_factors*2*2;
+	  _rom[n]= +j *dims[1] * n_factors*2*2 + i*n_factors*2*2;
+	  _co_pairs[n]=(om_pair){-j,-i};
+	}
+	else if (i>=j*3) {
+	  _com[n]= +j *dims[1] * n_factors*2*2 - (j-(i-j*3))*n_factors*2*2;
+	  _rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;
+	  _co_pairs[n]=(om_pair){j,-(j-(i-j*3))};
+	}
+	else{
+	  _com[n]= (-2*j+i)*dims[1] * n_factors*2*2 - j*n_factors*2*2;
+	  _rom[n]= (2*j-i)*dims[1] * n_factors*2*2 + j*n_factors*2*2;
+	  _co_pairs[n]=(om_pair){-2*j+i,-j};
+	}
+      
+	n++;
+      }
+    }
+
+    cudaMalloc(&com_l[h],  sizeof(i32)*n_factors);
+    err=cudaMemcpyAsync(com_l[h], _com, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    cudaMalloc(&rom_l[h],  sizeof(i32)*n_factors);
+    err=cudaMemcpyAsync(rom_l[h], _rom, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    cudaMalloc(&co_pairs_l[h],  sizeof(om_pair)*n_factors);
+    err=cudaMemcpyAsync(co_pairs_l[h], _co_pairs, sizeof(om_pair)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    
+  }
+  /* End prepare coordinates*/
+
+  
+
+  f32 ** unary_c_l = (f32**) malloc(sizeof(f32*) * n_samples);
+  for (j=0;j<n_samples;j++){
+    dims=PyArray_DIMS(X_py);
+    cudaMalloc(&unary_c_l[j], dims[0]*dims[1]*2*sizeof(f32));
+  }
+
+  f32 *RE, *CE;
+  cudaMalloc(&RE, sizeof(f32) * 2* n_factors *2);
+  cudaMalloc(&CE, sizeof(f32) * 2* n_factors *2);
+
+  f32 **V_F_l = (f32**) malloc(sizeof(f32*) * n_samples);
+  f32 **F_V_l = (f32**) malloc(sizeof(f32*) * n_samples);
+
+  for (j=0;j<n_samples;j++){
+    dims=PyArray_DIMS(X_py);
+    cudaMalloc(&V_F_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
+    cudaMalloc(&F_V_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
+  }
+
+
+  j=0;
+  gpu_loopy_data gdata;
+  gdata.V_data = V_data;
+  gdata.RE = RE;
+  gdata.CE = CE;
+  gdata.unary_w = unary_w;
+
+  gdata.V_F = V_F_l[j];
+  gdata.F_V = F_V_l[j];
+  gdata.mu = mu_l[j];
+  gdata.com = com_l[j];
+  gdata.rom = rom_l[j];
+  gdata.co_pairs = co_pairs_l[j];
+  gdata.unary_c = unary_c_l[j];
+  gdata.EY = EY_l[j];
+  gdata.X = X_l[j];
+
+  glpar.gdata = &gdata;
+  loopyGPU(self, X_py, &glpar, NULL);
+
+  dims= PyArray_DIMS(X_py);
+  err=cudaMemcpy(lpar->EY, EY_l[j], sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
+  assert(err==cudaSuccess);
+  
+
+  cudaFree(V_data);
+  cudaFree(RE);
+  cudaFree(CE);
+  for (j=0;j<n_samples;j++){
+    cudaFree(mu_l[j]);
+    cudaFree(EY_l[j]);
+    cudaFree(com_l[j]);
+    cudaFree(rom_l[j]);
+    cudaFree(co_pairs_l[j]);
+    cudaFree(unary_c_l[j]);
+    cudaFree(V_F_l[j]);
+    cudaFree(F_V_l[j]);
+  }
+  free(mu_l);
+  free(EY_l);
+  free(X_l);
+  free(Y_l);
+  free(_com);
+  free(_rom);
+  free(_co_pairs);
+  return lpar->EY;
+}
+extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_t *lpar, PyArrayObject *refimg){
+  npy_intp * dims= PyArray_DIMS(X_py);
+  i32 n_factors=self->n_factors;
+  i32 max_it=lpar->max_its,it;
+  gpu_loopy_data *gdata = lpar->gdata;
+  
+  f32 *V_data = gdata->V_data;
+  i32 i;
+
+
+  /* transfer matrices */
+  
+  // set up threads
+
+  const i32 n_streams = 10;
+  cudaStream_t stream[n_streams];
+  i32 curstream=0;
+  for (i=0;i<n_streams;i++) {
+    cudaStreamCreate(&stream[i]);
+  }
+  
   /* Allocate message buffers*/
-  f32 *F_V = lpar->F_V, *V_F = lpar->V_F;
-  n_elem = dims[0] * dims[1] * (n_factors*2) *2;
+  f32 *F_V = gdata->F_V, *V_F = gdata->V_F;
+  i32 n_elem = dims[0] * dims[1] * (n_factors*2) *2;
   dim3 blockGrid(n_elem/128 + 1);
   dim3 threadGrid(128);
-  gpu_fill_value<<<blockGrid, threadgrid,0, stream[(curstream++)%n_streams]>>>(F_V, 0.0, n_elem);
-  gpu_fill_value<<<blockGrid, threadgrid,0, stream[(curstream++)%n_streams]>>>(V_F, 0.0, n_elem);
+  gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(F_V, 0.0, n_elem);
+  gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(V_F, 0.0, n_elem);
   
   /* Allocate coordinate system*/
-  i32 *com = lpar->com, *rom = lpar->rom;
-  om_pair *co_pairs = lpar->co_pairs;
 
-  f32 *mu = lpar->mu;
+  f32 *mu = gdata->mu;
   n_elem = dims[0] * dims[1] *2;
-  dim3 blockGrid(n_elem/128 + 1);
-  dim3 threadGrid(128);
-  gpu_fill_value<<<blockGrid, threadgrid, 0, stream[(curstream++)%n_streams]>>>(mu, BIG, n_elem);
+  dim3 blockGrid1(n_elem/128 + 1);
+  dim3 threadGrid1(128);
+  
+  gpu_fill_value<<<blockGrid1, threadGrid1, 0, stream[(curstream++)%n_streams]>>>(mu, BIG, n_elem);
 
 
-  f32 *RE= lpar->RE, *CE= lpar->CE;
+  f32 *RE= gdata->RE, *CE= gdata->CE;
   n_elem = n_factors*4;
-  dim3 blockGrid(n_elem/128 + 1);
-  dim3 threadGrid(128);
-  cudaMemcpy(RE, V_data, n_elem * sizeof(f32), cudaDevicetoDevice);
-  cudaMemcpy(CE, V_data + n_elem * sizeof(f32), n_elem * sizeof(f32), cudaDevicetoDevice);
-  gpu_multiply<<<blockGrid, threadgrid, 0, stream[(curstream++)%n_streams]>>>(RE, n_elem);
-  gpu_multiply<<<blockGrid, threadgrid, 0, stream[(curstream++)%n_streams]>>>(CE, n_elem);
+  dim3 blockGrid2(n_elem/128 + 1);
+  dim3 threadGrid2(32,2,2);
+  //cudaMemcpy(RE, V_data, n_elem * sizeof(f32), cudaMemcpyDeviceToDevice); //need to swizzle here
+  gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(RE, V_data, n_factors, n_elem);
+  gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(CE, V_data + n_elem, n_factors, n_elem);
+  //cudaMemcpy(CE, V_data + n_elem, n_elem * sizeof(f32), cudaMemcpyDeviceToDevice);
+  //gpu_multiply<<<blockGrid2, threadGrid2, 0, stream[(curstream++)%n_streams]>>>(RE, n_elem );
+  //gpu_multiply<<<blockGrid2, threadGrid2, 0, stream[(curstream++)%n_streams]>>>(CE, n_elem );
 
   for (i=0;i<n_streams;i++) {
     cudaStreamSynchronize(stream[i]);
@@ -73,25 +247,15 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   i32 *converged;
   cudaMalloc(&converged,sizeof(i32));
   i32 _converged = 1;
-  cudaMemcpy(converged, &_converged, sizeof(i32), cudaHostToDevice);
+  cudaMemcpy(converged, &_converged, sizeof(i32), cudaMemcpyHostToDevice);
 
-  targs.com=com;
-  targs.rom=rom;
-  targs.co_pairs = co_pairs;
-  targs.X=X;
-  targs.refimg=NULL;
+  loopygpu_t targs;
+  targs.dims = dims;
   targs.lpar = lpar;
   targs.self = self;
-  targs.F_V = F_V;
-  targs.V_F = V_F;
-  targs.RE = RE;
-  targs.CE = CE;
-  targs.mu = mu;
-  targs.unary_w=unary_w;
-  targs.unary_c=unary_c;
-  targs.X_py = X_py;
-  targs.converged = converged;
-  targs._converged = &_converged;
+  targs.dev_converged = converged;
+  targs.host_converged = &_converged;
+  targs.gdata = gdata;
 
 
   for (it = 0; it < max_it; it++){
@@ -105,60 +269,35 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   }
   printf("converged %d %f\n",_converged, lpar->stop_thresh);
 
-  i32 *EY = lpar->EY;
+  i32 *EY = gdata->EY;
 
   
   dim3 dimGrid(dims[0],dims[1]);
   dim3 singGrid(2);
-  gpu_loopy_V_F__label<<<dimGrid, singGrid, 2*sizeof(f32)>>>(F_V, unary_c, EY, n_factors);
+  gpu_loopy_V_F__label<<<dimGrid, singGrid, 2*sizeof(f32)>>>(mu, EY, n_factors);
 
-  //cudaMemcpy(lpar->EY, EY, dims[0]*dims[1]*sizeof(i32), cudaMemcpyDeviceToHost);
-  
-  
-  
- cleanup:
-  _mm_free(_F_V);
-  _mm_free(_V_F);
-  free(_com);
-  free(_rom);
-  free(_co_pairs);
-  _mm_free(_RE);
-  _mm_free(_CE);
+  cudaFree(converged);  
 
-  cudaFree(F_V);
-  cudaFree(V_F);
-  cudaFree(com);
-  cudaFree(rom);
-  cudaFree(co_pairs);
-  cudaFree(RE);
-  cudaFree(CE);
-  cudaFree(unary_w);
-  cudaFree(unary_c);
-  cudaFree(mu);
-  cudaFree(X);
-  cudaFree(converged);
-  cudaFree(EY);
-
-  return lpar->EY;
+  return gdata->EY;
 }
 
 
 extern "C" void gpu_loopy_F_V(loopygpu_t *targs) { 
 
-  npy_intp * dims= PyArray_DIMS(targs->X_py);
+  npy_intp * dims= targs->dims;
   gridCRF_t *self = targs->self;
   
   i32 n_factors=self->n_factors;
   
-  f32 *F_V= targs->F_V;
-  f32 *V_F= targs->V_F;
+  f32 *F_V= targs->gdata->F_V;
+  f32 *V_F= targs->gdata->V_F;
 
-  f32 *RE = targs->RE;
-  f32 *CE = targs->CE;
+  f32 *RE = targs->gdata->RE;
+  f32 *CE = targs->gdata->CE;
 
-  i32 *com = targs->com;
-  i32 *rom = targs->rom;
-  om_pair * co_pairs = targs->co_pairs;
+  i32 *com = targs->gdata->com;
+  i32 *rom = targs->gdata->rom;
+  om_pair * co_pairs = targs->gdata->co_pairs;
   
   i32 i;
 
@@ -172,8 +311,8 @@ extern "C" void gpu_loopy_F_V(loopygpu_t *targs) {
   dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(n_factors);
 		  
-  gpu_loopy_F_V__Flow<<<dimGrid, factorgrid, 0, stream[0]>>>(F_V, V_F, RE, NULL, rom, co_pairs, n_factors);
-  gpu_loopy_F_V__Fup<<<dimGrid, factorgrid, 0, stream[1]>>>(F_V, V_F, CE, NULL, com, co_pairs, n_factors);
+  gpu_loopy_F_V__Flow<<<dimGrid, factorgrid, 0, stream[0]>>>(F_V, V_F, RE, NULL, com, co_pairs, n_factors);
+  gpu_loopy_F_V__Fup<<<dimGrid, factorgrid, 0, stream[1]>>>(F_V, V_F, CE, NULL, rom, co_pairs, n_factors);
 
   for (i=0;i<2;i++) {
     cudaStreamDestroy(stream[i]);
@@ -195,10 +334,12 @@ __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * ref
   if ( ! (x+cop.x <0 || x+cop.x >= gridDim.x || y+cop.y < 0 || y+cop.y >=gridDim.y) ){//&& !(refimg[COORD2(x+cop.x,y+cop.y, gridDim.x, gridDim.y, 1)]==0)) {
     i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,2);
     i32 co = origin + com[n] + 2*(n + n_factors);
+
+    if (!(co< 0 || co >= gridDim.x * gridDim.y * (n_factors*2) *2)) {
+      F_V[co] = RE[n*2] + V_F[origin] > RE[n_factors*2 + n*2] + V_F[origin+1] ? RE[n*2] + V_F[origin] : RE[n_factors*2 + n*2] + V_F[origin+1];
   
-    F_V[co] = RE[n*2] + V_F[origin] > RE[n_factors*2 + n*2] + V_F[origin+1] ? RE[n*2] + V_F[origin] : RE[n_factors*2 + n*2] + V_F[origin+1];
-  
-    F_V[co+1] = RE[n*2+1] + V_F[origin] > RE[n_factors*2 + n*2 + 1] + V_F[origin+1] ? RE[n*2+1] + V_F[origin] : RE[n_factors*2 + n*2 + 1] + V_F[origin+1];
+      F_V[co+1] = RE[n*2+1] + V_F[origin] > RE[n_factors*2 + n*2 + 1] + V_F[origin+1] ? RE[n*2+1] + V_F[origin] : RE[n_factors*2 + n*2 + 1] + V_F[origin+1];
+    }
   }
 }
 
@@ -216,11 +357,13 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
     i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,2);
     //i32 co=origin + rom[n]; //check this
     i32 co = origin+rom[n] + 2*n;
-    F_V[co] = CE[n*2] + V_F[origin] > CE[n_factors*2 + n*2] + V_F[origin+1] ?
-      CE[n*2] + V_F[origin] : CE[n_factors*2 + n*2] + V_F[origin+1];
+    if (!(co< 0 || co >= gridDim.x * gridDim.y * (n_factors*2) *2)) {
+      F_V[co] = CE[n*2] + V_F[origin] > CE[n_factors*2 + n*2] + V_F[origin+1] ?
+	CE[n*2] + V_F[origin] : CE[n_factors*2 + n*2] + V_F[origin+1];
   
-    F_V[co+1] = CE[n*2+1] + V_F[origin] > CE[n_factors*2 + n*2 + 1] + V_F[origin+1] ?
-      CE[n*2+1] + V_F[origin] : CE[n_factors*2 + n*2 + 1] + V_F[origin+1];
+      F_V[co+1] = CE[n*2+1] + V_F[origin] > CE[n_factors*2 + n*2 + 1] + V_F[origin+1] ?
+	CE[n*2+1] + V_F[origin] : CE[n_factors*2 + n*2 + 1] + V_F[origin+1];
+    }
   }
   
 }
@@ -230,29 +373,26 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
 extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
 
 
-  //TODO:
-  // - copy X to gpu
-
   i32 i;
   gridCRF_t *self = targs->self;
-  f32 *X = targs->X;
+  f32 *X = targs->gdata->X;
 
-  loopy_params_t * lpar = targs->lpar;
+  gpu_loopy_params_t * lpar = targs->lpar;
   
-  npy_intp * dims= PyArray_DIMS(targs->X_py);
-  i64 n_factors=self->n_factors;
+  npy_intp * dims= targs->dims;
+  i32 n_factors=self->n_factors;
   f32 stop_thresh=lpar->stop_thresh;
   
 
-  f32 * unary_w= targs->unary_w;
-  f32 * unary_c = targs->unary_c;
+  f32 * unary_w= targs->gdata->unary_w;
+  f32 * unary_c = targs->gdata->unary_c;
 
-  f32 *F_V = targs->F_V;
-  f32 *V_F = targs->V_F;
-  f32 *mu = targs->mu;
+  f32 *F_V = targs->gdata->F_V;
+  f32 *V_F = targs->gdata->V_F;
+  f32 *mu = targs->gdata->mu;
 
   /* runtime Flags*/
-  i32 *converged = targs->converged;
+  i32 *converged = targs->dev_converged;
   
   const i32 n_streams = 1;
   cudaStream_t stream[n_streams];
@@ -271,16 +411,20 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
+  f32* margbefore = (f32*)malloc(sizeof(f32)*dims[0]*dims[1]);
+  cudaMemcpy(margbefore, mu, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
+  f32* margafter = (f32*)malloc(sizeof(f32)*dims[0]*dims[1]);
   gpu_loopy_V_F__computeunary<<<dimGrid, singGrid, 0, stream[0]>>>(X, unary_w, unary_c);
   gpu_loopy_V_F__sumfactors<<<dimGrid, factorgrid, sizeof(f32)*n_factors*8, stream[0]>>>(F_V, V_F, unary_c, NULL, n_factors);
   gpu_loopy_V_F__marginal<<<dimGrid, singGrid, 0, stream[0]>>>(F_V, unary_c, mu, n_factors, stop_thresh, converged);
-
+  cudaMemcpy(margafter, mu, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
+  
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);
   }
+  
 
-
-  cudaMemcpy(targs->_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
+  cudaMemcpy(targs->host_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
  
 }
 
@@ -351,7 +495,7 @@ __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 
 }
 
 //TODO: change to mu instead
-__global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_factors) {
+__global__ void gpu_loopy_V_F__label(f32 *mu, i32 *EY, i32 n_factors) {
 
   /* Computes the predicted label given the values */
   extern __shared__ char array[];
@@ -361,13 +505,8 @@ __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_fac
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
   i32 origin = COORD2(x,y,gridDim.x, gridDim.y, 2) + c;
-
-  f32 sum = unary_c[origin];
-  // sum up factors
-  for (i=0;i<n_factors*2;i++) {
-    sum += F_V[COORD3(x,y,i,gridDim.x, gridDim.y, 2*n_factors, 2) + c];
-  }
-  shared_marginal[c] = sum;
+  
+  shared_marginal[c] = mu[origin];
   __syncthreads();
   if (c==0  && shared_marginal[0] > shared_marginal[1]) {
     EY[COORD2(x,y,gridDim.x, gridDim.y, 1)] = 0;
@@ -380,177 +519,23 @@ __global__ void gpu_loopy_V_F__label(f32 *F_V, f32 * unary_c, i32 *EY, i32 n_fac
 
 
 __global__ void gpu_fill_value(f32 *buffer, f32 val, i32 lim) {
-  i32 index = blockIdx * blockDim.x + threadIdx.x;
+  i32 index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index < lim) {buffer[index] = val;}
 }
 
 __global__ void gpu_multiply(f32 *buffer, i32 lim) {
-   i32 index = blockIdx * blockDim.x + threadIdx.x;
+   i32 index = blockIdx.x * blockDim.x + threadIdx.x;
    if (index < lim) {buffer[index] = -buffer[index];}
 }
 
 
-#ifdef CPU_TEST
+__global__ void gpu_swizzle(f32 *dest, f32 *src, i32 n_factors, i32 lim) {
 
 
-
-void __debug_loopy_V_F(loopygpu_t *targs) {
-
-  /* Compute factor to variable messages */
-  i32 WARN_FLAG=1;
-  i32 i,j;
-  gridCRF_t *self = targs->self;
-  PyArrayObject *X = targs->X_py;
-  loopy_params_t * lpar = targs->lpar;
-  
-  f32 a,b;
-  npy_intp * dims= PyArray_DIMS(X);
-  i64 n_factors=self->n_factors;
-  f32 stop_thresh=lpar->stop_thresh;
-  
-  f32 * unary = self->unary;
-  
-  npy_intp x,y;
-  i32 n;
-
-
-  f32 *F_V = targs->_F_V;
-  f32 *V_F = targs->_V_F;
-
-  f32 *gF_V = targs->F_V;
-  f32 *gV_F = targs->V_F;
-
-  cudaMemcpy(F_V, gF_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyDeviceToHost);
-  cudaMemcpy(V_F, gV_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyDeviceToHost);
-  
-  
-  f32 *marginals = (f32*) _mm_malloc(sizeof(f32)*dims[0]*dims[1]*2,32);
-  f32 *mu = targs->_mu;
-
-  /* coordinates */
-
-  /* runtime Flags*/
-  i32 *converged = targs->_converged;
-  
-  i32 origin;
-
-  f32 tmp[2];
-
-  __m256 r1,r2;
-  /* Compute variable to factor messages */
-  for (x=0;x<dims[0];x++) {
-    for (y=0;y<dims[1];y++) {
-      //variable to factor messages
-      
-      f64 base= *((f64*)PyArray_GETPTR3(X,x,y,0));
-      *((f64*)tmp) = base;
-      tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
-      tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
-      r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
-      //Warning: possible segfault
-	
-      for (n=0;n<n_factors*2;n+=4) { //Set baseline, since we know that unary is added to each V_F
-	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
-      }
-      
-      for (i=0;i<n_factors*2;i++) {
-	base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
-	r1=(__m256)_mm256_set1_pd(base);
-	for (n=0;n<n_factors*2;n+=4) {
-	  r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
-	  r2=_mm256_add_ps(r2,r1);
-	  _mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
-	}
-      }
-      for (n=0;n<n_factors*2;n+=8) { //correct double counting
-	r1=_mm256_load_ps(&F_V[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
-	r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
-	r2=_mm256_sub_ps(r2,r1);
-	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
-      }
-
-      /*
-      //TODO: normalize
-      //This is SSE normalization. Unless more knowledge is gained, it would be slower to use these than individually going over each value.
-      */
-	
-      //Apply normalization
-      for (n=0;n<n_factors*2;n++) {
-	//TODO: optimize
-	a=V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)];
-	b=V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)+1];
-	a=0.5*(a+b);
-	V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]-=a;
-	V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)+1]-=a;
-      }
-	
-      //TODO:Add to marginals
-      origin=COORD2(x,y,dims[0],dims[1],2);
-
-      assert (origin < dims[0]*dims[1]*2);
-
-      marginals[origin]=tmp[0];
-      marginals[origin+1]=tmp[1];
-      for (i=0;i<n_factors*2;i++) {
-
-	assert(COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+ 1 < dims[0] * dims[1] * (n_factors*2) *2 && COORD3(x,y,n,dims[0],dims[1],2*n_factors,2) > 0);
-	marginals[origin]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]; // invalid read of 4
-	marginals[origin+1]+=F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)+1];
-	if (isnan(marginals[origin]) && WARN_FLAG) {
-	  printf("MARGINAL WARNING %d %d\n",x,y);
-	  for (j=0;j<n_factors*2;j++) {
-	    printf("%f %f\n",F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)],F_V[COORD3(x,y,j,dims[0],dims[1],2*n_factors,2)+1]); // invalid read of 4
-	  }
-	  WARN_FLAG=0;
-	}
-      }
-      a=fabs(marginals[origin]-mu[origin]);
-      if (a > stop_thresh) {
-	*converged = 0;
-      }
-      a=fabs(marginals[origin+1]-mu[origin+1]);
-      if (a > stop_thresh) {
-	*converged = 0;
-      }
-
-      mu[origin]=marginals[origin];
-      mu[origin+1]=marginals[origin+1];
-      //TODO: calculate marginal
-    }
+  //TODO: check results if there is an even factor
+  i32 srcindex = blockIdx.x*blockDim.x*blockDim.y*blockDim.z + threadIdx.x*blockDim.y*blockDim.z + threadIdx.y*blockDim.z + threadIdx.z;
+  i32 destindex = threadIdx.y * n_factors * 2 + (blockIdx.x*blockDim.x*blockDim.z) + threadIdx.x * blockDim.z + threadIdx.z;
+  if ((blockIdx.x*blockDim.x*blockDim.z) + threadIdx.x*blockDim.z + threadIdx.z < n_factors*2) {
+    dest[destindex] = -src[srcindex];
   }
-
-  _mm_free(marginals);
-  cudaMemcpy(gF_V, F_V, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice);
-  cudaMemcpy(gV_F, V_F, dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32), cudaMemcpyHostToDevice);
 }
-
-
-void *_loopy_label(loopygpu_t *l_args) {
-  loopy_params_t * lpar = l_args->lpar;
-  npy_intp * dims= PyArray_DIMS(l_args->X_py);
-  i32 *ret=lpar->EY;
-  f32 *mu=l_args->_mu;
-  i32 x,y;
-  i32 origin;
-  for (x=0;x<dims[0];x++) {
-    for (y=0;y<dims[1];y++) {
-   
-      origin=COORD2(x,y,dims[0],dims[1],2); 
-      assert(origin >= 0 && origin + 1 < dims[0]*dims[1]*2);
-      if (mu[origin] > mu[origin+1]) {
-	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
-      }
-      else{
-	ret[COORD2(x,y,dims[0],dims[1],1)]=1;
-
-      }
-    }
-
-  }
-
-  //cudaMemcpy(ret, gEY, dims[0] * dims[1] * sizeof(i32), cudaMemcpyHostToDevice);
-
-  return NULL;
-
-}
-#endif

@@ -1,6 +1,8 @@
 #ifndef gridtypes_h
 #define gridtypes_h
 
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+
 #include "types.h"
 #include <Python.h>
 #include <structmember.h>
@@ -26,7 +28,7 @@ typedef struct{
   i64 n_outcomes;
   i64 n_factors;
   i64 depth;
-  PyArrayObject *V;
+  PyArrayObject *V, *unary_pyarr;
   f32 *V_data;
   f32 *unary;
   i32 gpuflag;

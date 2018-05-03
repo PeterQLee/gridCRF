@@ -52,8 +52,10 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   
   npy_intp dims[2]= {n_factors*2, 4};
   self->V=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims,NPY_FLOAT32,self->V_data);
+  npy_intp dims1[2]= {2, 2};
+  self->unary_pyarr=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims1,NPY_FLOAT32,self->unary);
   Py_INCREF(self->V);
-
+  Py_INCREF(self->unary_pyarr);
   
 
   return 0;
@@ -271,7 +273,7 @@ static void* _calculate_gradient(gradient_t *args) {
       if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
       tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
+      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]); //TODO: this should be negative..
       yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
       //l here is the estimated label
@@ -281,7 +283,8 @@ static void* _calculate_gradient(gradient_t *args) {
 	//l=(i32*) PyArray_GETPTR2(EY,i+ainc[n],j+binc[n]);
 
 	l=&EY[COORD2(i+ainc[n],j+binc[n],dims[0],dims[1],1)];
-	v=&V[n*4 + ((*l)&1)*2]; // 4x4 transfer matrix for n  
+	v=&V[n*4 + ((*l)&1)*2]; // 4x4 transfer matrix for n
+	//we don't negate V because unary gets negated in the form of RE and CE
 	//We pick the row that corresponds to the outcome
 	//TODO: Improve with SSE
 
@@ -383,12 +386,12 @@ static void* _calculate_gradient(gradient_t *args) {
 
 
 
-static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t tpt){
+static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t *tpt){
   #define NUM_UNARY 4
 
   i64 depth= self->depth;
   i32 i,j,n,a,b,d,k;
-  i32 its, epochs=tpt.epochs;//epochs=1000;
+  i32 its, epochs=tpt->epochs;//epochs=1000;
   i32 *l;
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
@@ -407,7 +410,7 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
   i32 *binc = malloc(sizeof(i32)*n_factors*2);
   
   f32 L=0.0;
-  f32 alpha=tpt.alpha;
+  f32 alpha=tpt->alpha;
 
   __m256 r1,r2;
   
@@ -483,7 +486,7 @@ static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, tra
   #define N_THREADS 1
 
   if (self->gpuflag){
-    GPU_grad_descent(&gradargs,epochs);
+    GPU_grad_descent(&gradargs,epochs,0);
   }
   else{
     grad_descent(&gradargs,epochs,N_THREADS);
@@ -868,7 +871,7 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
     }
   }
   
-  CPU_train(self,(PyObject*)train,(PyObject*)lab,tpt);
+  _train(self,(PyObject*)train,(PyObject*)lab,&tpt);
 
   return Py_BuildValue("");  
 }
@@ -896,7 +899,8 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   lpar.EY=PyArray_DATA(out);
 
   if (self->gpuflag) {
-    loopyGPU(self,test,&lpar,refimg);
+    //loopyGPU(self,test,&lpar,refimg);
+    predict_loopyGPU(self,test,&lpar, refimg);
   }
   else{
     loopyCPU(self,test,&lpar,refimg);

@@ -14,7 +14,7 @@
 #include "gridtypes.h"
 #include "loopy.h"
 #include "loopy_gpu.h"
-
+#include "train_gpu.h"
 
 
 static void* _calculate_gradient(gradient_t *args);
@@ -33,6 +33,7 @@ static PyMethodDef  gridCRF_methods[]={
 
 static PyMemberDef gridCRF_members[]={
   {"V",T_OBJECT,offsetof(gridCRF_t,V),0,"Energy transfer matrix"},
+  {"unary", T_OBJECT, offsetof(gridCRF_t, unary_pyarr),0, "Unary matrix"},
   {NULL}
 };
 

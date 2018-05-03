@@ -427,11 +427,11 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
 	  WARN_FLAG=0;
 	}
       }
-      a=fabs(marginals[origin]-mu[origin]);
+      a=fabsf(marginals[origin]-mu[origin]);
       if (a > stop_thresh) {
 	*converged = 0;
       }
-      a=fabs(marginals[origin+1]-mu[origin+1]);
+      a=fabsf(marginals[origin+1]-mu[origin+1]);
       if (a > stop_thresh) {
 	*converged = 0;
       }

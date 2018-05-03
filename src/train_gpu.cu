@@ -1,34 +1,37 @@
-
+extern "C" {
+#include "train_gpu_cu.h"
+  
+}
+#define N_UNARY 4
 //TODO: copy V_data, to allocated V_data
-extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs) {
+extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   i32 h,i,j;
-  //PyArrayObject *EY;
-  const i32 N_UNARY=4;
-  f32 *unary=(args->self)->unary;
-  f32 *V=(args->self)->V_data;
-  pthread_t *threads= malloc(sizeof(pthread_t)*n_threads);
+
+  gridCRF_t *self = args->self;
   npy_intp *dims=args->dims;
-  
-  i32 num_params= args->num_params;
-  i64 n_factors=args->n_factors;
-  gradient_t *targs=malloc(sizeof(gradient_t) * n_threads);
-  npy_intp *start= malloc(sizeof(npy_intp)*n_threads*2);
-  npy_intp *stop= malloc(sizeof(npy_intp)*n_threads*2);
+  i32 depth = self->depth;
+
+  gpu_loopy_params_t lpar;
+  lpar.max_its = args->lpar->max_its;
+  lpar.stop_thresh = args->lpar->stop_thresh;
+  lpar.eval = args->lpar->eval;
+
+  i32 n_factors=args->n_factors;
+
   PyObject *X_list=args->X_list;
-  f32 *V_change;
+  PyObject *Y_list=args->Y_list;
   
-  i32 s0;
-  const f32 lr=0.01;
+  
   f32 totL;
   i32 n_samples = PyList_Size(X_list);
-
+  cudaError_t err = cudaSuccess;
 
   
   f32 **mu_l = (f32 **) malloc(sizeof(f32*) * n_samples);
-  f32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
+  i32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
 
   f32 **X_l =  (f32 **) malloc(sizeof(f32*) * n_samples);
-  f32 **Y_l =  (i32 **) malloc(sizeof(i32*) * n_samples);
+  i32 **Y_l =  (i32 **) malloc(sizeof(i32*) * n_samples);
 
   //cuda streams
   const i32 n_streams = 10;
@@ -39,41 +42,58 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs) {
   
   i32 curstream = 0;
 
+
+  /* parameters */
   f32 * V_data;
-  cudaMalloc(&V_data, sizeof(f32)*n_factors*8);//check this...
-  cudaAsyncMemcpy(V_data, self->V_data, sizeof(f32)*n_factors*8, cudaHostToDevice, stream[(curstream++)%n_streams]);
+  cudaMalloc(&V_data, sizeof(f32)*(n_factors*8 + N_UNARY));//check this...
+  err=cudaMemcpyAsync(V_data, self->V_data, sizeof(f32)*(n_factors*8), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  
+  f32 *unary_w = V_data + n_factors*8;//sizeof(f32)*n_factors*8;
+  err=cudaMemcpyAsync(unary_w, self->unary, N_UNARY*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  
   //TODO: copy V to V_data
   for (j=0;j<n_samples;j++){
-    dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+    dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
     //allocate space
     cudaMalloc(&mu_l[j],dims[0]*dims[1]*2*sizeof(f32));
     
     cudaMalloc(&EY_l[j],sizeof(i32)*dims[0]*dims[1]);
 
+    cudaMalloc(&X_l[j], sizeof(f32)*dims[0]*dims[1]*2);
+    cudaMalloc(&Y_l[j], sizeof(i32)*dims[0]*dims[1]*2);
     //Copy images to memory
-    cudaAsyncMemcpy(X_l[j], PyList_Get(X_list,j)->data,\
+    err=cudaMemcpyAsync(X_l[j],PyArray_DATA(((PyArrayObject*) PyList_GetItem(X_list,j))), \
 		    sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyHostToDevice,
-		    streams[(curstream++)%n_streams]);
-    cudaAsyncMemcpy(Y_l[j], PyList_Get(Y_list,j)->data,\
+		    stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    err=cudaMemcpyAsync(Y_l[j], PyArray_DATA(((PyArrayObject*)PyList_GetItem(Y_list,j))), \
 		    sizeof(i32)*dims[0]*dims[1]*2, cudaMemcpyHostToDevice,\
-		    streams[(curstream++)%n_streams]);
+		    stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
   }
 
   f32 *V_change;
   cudaMalloc(&V_change, sizeof(f32)*(n_factors*4*2+N_UNARY));
+
+
+  
+  f32 *unary_change = V_change + sizeof(f32)*n_factors*4*2;
 
   i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
   i32 **rom_l = (i32**) malloc(sizeof(i32*)*n_samples);
   om_pair **co_pairs_l = (om_pair**) malloc(sizeof(om_pair*)*n_samples);
   
   /* Prepare coordinates*/
+  i32 *_com=(i32*) malloc(sizeof(i32)*n_factors);
+  i32 *_rom=(i32*) malloc(sizeof(i32)*n_factors);
+  om_pair *_co_pairs=(om_pair*)malloc(sizeof(om_pair)*n_factors);
   for (h=0;h<n_samples;h++) {
-    dims=PyArray_DIMS(PyList_GetItem(X_list,h));
-    i32 *_com=(i32*) malloc(sizeof(i32)*n_factors);
-    i32 *_rom=(i32*) malloc(sizeof(i32)*n_factors);
-    om_pair *_co_pairs=(om_pair*)malloc(sizeof(om_pair)*n_factors);
+    dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,h));
 
-    n=0;
+
+    i32 n=0;
     for (j=1;j<=depth;j++ ) {
       for (i=0;i<j*4;i++) {
 	if (i<j) {
@@ -96,39 +116,265 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs) {
       }
     }
 
-    cudaAsyncMemcpy(&com_l[h], _com, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, streams[(curstream++)%n_streams]);
-    cudaAsyncMemcpy(&rom_l[h], _rom, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, streams[(curstream++)%n_streams]);
-    cudaAsyncMemcpy(&co_pairs_l[h], _co_pairs, sizeof(om_pair)*n_factors, cudaMemcpyHostToDevice, streams[(curstream++)%n_streams]);
+    cudaMalloc(&com_l[h],  sizeof(i32)*n_factors);
+    err=cudaMemcpyAsync(com_l[h], _com, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    cudaMalloc(&rom_l[h],  sizeof(i32)*n_factors);
+    err=cudaMemcpyAsync(rom_l[h], _rom, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
+    cudaMalloc(&co_pairs_l[h],  sizeof(om_pair)*n_factors);
+    err=cudaMemcpyAsync(co_pairs_l[h], _co_pairs, sizeof(om_pair)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+    assert(err==cudaSuccess);
     
-     n=0;
   }
   /* End prepare coordinates*/
 
-  f32 *unary_w;
-  cudaMalloc(&unary_w, 4 * sizeof(f32));
-  cudaAsyncMemcpy(unary_w, self->unary, 4*sizeof(f32), cudaHostToDevice, stream[(curstream++)%n_streams]);
+  
 
   f32 ** unary_c_l = (f32**) malloc(sizeof(f32*) * n_samples);
   for (j=0;j<n_samples;j++){
-    dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+    dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
     cudaMalloc(&unary_c_l[j], dims[0]*dims[1]*2*sizeof(f32));
   }
 
   f32 *RE, *CE;
-  cudaMalloc(&RE, 2* n_factors *2* sizeof(f32));
-  cudaMalloc(&CE, 2* n_factors *2* sizeof(f32));
+  cudaMalloc(&RE, sizeof(f32) * 2* n_factors *2);
+  cudaMalloc(&CE, sizeof(f32) * 2* n_factors *2);
 
-  for (i=0;i<epochs;i++) {
-    for (j=0;j<n_samples;j++){
-      //Assign the correct arguments, call loopyGPU
-      //Make training function..
-    }
+  f32 **V_F_l = (f32**) malloc(sizeof(f32*) * n_samples);
+  f32 **F_V_l = (f32**) malloc(sizeof(f32*) * n_samples);
+
+  for (j=0;j<n_samples;j++){
+    dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
+    cudaMalloc(&V_F_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
+    cudaMalloc(&F_V_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
   }
 
 
+  i32 * ainc;
+  i32 * binc;
+  cudaMalloc(&ainc, sizeof(i32)*n_factors*2);  
+  cudaMalloc(&binc, sizeof(i32)*n_factors*2);
+  err=cudaMemcpyAsync(ainc, args->ainc, sizeof(i32)*n_factors*2, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  err=cudaMemcpyAsync(binc, args->binc, sizeof(i32)*n_factors*2, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  assert(err==cudaSuccess);
+  
+  
+  
+  gpu_gradient_t g_args;
+  g_args.self = self;
+  g_args.dev_ainc = ainc;
+  g_args.dev_binc = binc;
+  g_args.num_params= args->num_params;
+  g_args.n_factors = args->n_factors;
+  g_args.alpha=args->alpha;
+  g_args.lpar = &lpar;
+  g_args.host_L = 0.0;
+  g_args.dev_V_change = V_change;
+  g_args.dev_unary_change = unary_change;
+  
+  cudaMalloc(&(g_args.dev_L),sizeof(f32));
+  
+  gpu_loopy_data gdata;
+  gdata.V_data = V_data;
+  gdata.RE = RE;
+  gdata.CE = CE;
+  gdata.unary_w = unary_w;
+
+  g_args.gdata = &gdata;
+  lpar.gdata = &gdata;
+
+  for (i=0;i<n_streams;i++) {
+    cudaStreamDestroy(stream[i]);
+  }
+  
+  for (i=0;i < epochs;i++) {
+    for (j=0;j < n_samples;j++){
+      //Assign the correct arguments, call loopyGPU
+      //Make training function..
+      gdata.V_F = V_F_l[j];
+      gdata.F_V = F_V_l[j];
+      gdata.mu = mu_l[j];
+      gdata.com = com_l[j];
+      gdata.rom = rom_l[j];
+      gdata.co_pairs = co_pairs_l[j];
+      gdata.unary_c = unary_c_l[j];
+      gdata.EY = EY_l[j];
+      gdata.X = X_l[j];
+
+      g_args.dev_X = X_l[j];
+      g_args.dev_Y = Y_l[j];
+      g_args.dims= dims;
+
+      loopyGPU(self, (PyArrayObject*)PyList_GetItem(X_list,j), &lpar, NULL);
+      gpu_calculate_gradient(&g_args);
+    }
+  }
   
 
+  
+  // copy V_data back to numpy space...
+  // also copy unary data back to numpy space3
+  cudaMemcpy(self->V_data, V_data,  sizeof(f32)*(n_factors*8), cudaMemcpyDeviceToHost);
+  cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(N_UNARY), cudaMemcpyDeviceToHost);
 
-  // copy V_change data back to numpy space...
-  // also copy unary data back to numpy space
+  //Time to clean up everything
+  //warning:bad free in here somewhere
+  cudaFree(V_data);
+  cudaFree(RE);
+  cudaFree(CE);
+  cudaFree(ainc);
+  cudaFree(binc);
+  cudaFree(&(g_args.dev_L));
+  for (j=0;j<n_samples;j++){
+    cudaFree(mu_l[j]);
+    cudaFree(EY_l[j]);
+    cudaFree(com_l[j]);
+    cudaFree(rom_l[j]);
+    cudaFree(co_pairs_l[j]);
+    cudaFree(unary_c_l[j]);
+    cudaFree(V_F_l[j]);
+    cudaFree(F_V_l[j]);
+  }
+  free(mu_l);
+  free(EY_l);
+  free(X_l);
+  free(Y_l);
+  free(_com);
+  free(_rom);
+  free(_co_pairs);
+}
+
+
+
+static void gpu_calculate_gradient(gpu_gradient_t *args) {
+  f32 *X = args->dev_X;
+  i32 *Y = args->dev_Y;
+  i32 *ainc = args->dev_ainc, *binc = args->dev_binc;
+  f32 *V_change = args->dev_V_change;
+  f32 *unary_change = args->dev_unary_change;
+  f32 *unary_w = args->gdata->unary_w;
+  f32 *mu = args->gdata->mu;
+  
+  f32 *L = args->dev_L;
+  npy_intp *dims = args->dims;
+  i32 n_factors = args->self->n_factors;
+  //fille V_change with 0s
+  // fill unary_change with 0s
+
+  i32 * EY = args->gdata->EY;
+  f32 * V = args->gdata->V_data;
+
+
+  
+  i32 n_elem;
+  n_elem=(n_factors*4*2+N_UNARY);
+  dim3 blockGrid(n_elem/128 + 1);
+  dim3 threadGrid(128);
+  gpu_fill_value<<<blockGrid, threadGrid>>>(V_change,0.0, n_elem);
+  //note, this also fills unary_change
+
+  f32 alpha = args->alpha;
+  dim3 factorgrid(2*n_factors,2);
+  dim3 singGrid(2);
+  gpu_loopy_V_F__computeunary<<<factorgrid, singGrid >>>(X, unary_w, mu);
+
+  dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
+  dim3 threadGrid1(16,16,2);
+
+  i32 *buffer  = (i32*) malloc(sizeof(i32)*dims[0]*dims[1]);
+  cudaError_t err = cudaMemcpy(buffer, EY, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
+  printf("cerr %d\n",err);
+  assert(err == cudaSuccess);
+  
+  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2 >>> (mu, EY, Y, V, V_change, unary_change, ainc, binc, alpha*0.01, (i32) dims[0], (i32) dims[1], n_factors);
+
+  dim3 blockGrid2(1);
+  dim3 threadGrid2(n_factors*8 + N_UNARY);
+  gpu_update_params<<<blockGrid2, threadGrid2>>> (V, V_change);
+  free(buffer);
+}
+
+
+__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
+  //Add to mu given the V matrix
+  // TODO: optimize by putting everything V into shared data.
+  // Also, possibly EY
+
+  //TODO: outof bounds occurs whenever blockIdx.x = 6 and threadidx = 2. Most likely there's been a miscalculation.
+  i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c= threadIdx.z;
+  i32 i;
+  
+  extern __shared__ char array[];
+  //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
+  //f32 *shared_mu;
+  f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
+  i32 l;
+  __syncthreads();
+  if ( x >= limx || y >= limy) return;
+  i32 co = ((x)*limy + y);
+  f32 sum = -mu[2*co+c];
+  f32 max;
+  for (i=0;i<n_factors;i++) {
+    if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+    l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+    sum += V[i*4 + (l)*2 + c];
+  }
+  for (i=0;i<n_factors;i++) {
+    if (x-ainc[i] < 0 || x-ainc[i]>=limx || y-binc[i] < 0 || y-binc[i] >= limy) continue;
+    
+    l= EY[COORD2(x-ainc[i],y-binc[i],limx,limy,1)];
+    sum += V[n_factors*4 + i*4 + (l)*2 + c];
+  }
+  
+  //put sum into shared memory
+  shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
+  
+  __syncthreads();
+
+  f32 s1, change;
+  if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
+    max = sum;
+  }
+  else{
+    max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+  }
+  __syncthreads();
+  
+  s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
+
+  shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+  __syncthreads();
+  // Each thread handles the specific class
+  //Softmax
+
+  l = Y[co*2+c];
+  s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]);
+  
+  change = -alpha*(l-s1);
+  atomicAdd(&unary_change[c*2], change*mu[co*2]);
+  atomicAdd(&unary_change[c*2+1], change*mu[co*2+1]);
+    
+  //possible optimization
+  for (i=0;i<n_factors;i++) {
+    if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+    l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+    //Atomic add
+    atomicAdd(&V_change[i*4 + 2*l +c], change);
+  }
+
+  for (i=0;i<n_factors;i++) {
+    if (x-ainc[i] < 0 || x-ainc[i]>=limx || y-binc[i] < 0 || y-binc[i] >= limy) continue;
+    
+    l= EY[COORD2(x-ainc[i],y-binc[i],limx,limy,1)];
+    //Atomic add
+    atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+  }
+}
+
+__global__ void gpu_update_params(f32 *V, f32* V_change) {
+  V[threadIdx.x] += V_change[threadIdx.x];
 }
