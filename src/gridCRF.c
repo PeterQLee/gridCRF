@@ -273,7 +273,7 @@ static void* _calculate_gradient(gradient_t *args) {
       if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
       tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]); //TODO: this should be negative..
+      yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
       yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
       //l here is the estimated label
@@ -327,7 +327,7 @@ static void* _calculate_gradient(gradient_t *args) {
       change[0] = -alpha * (((*l)&1)-yv[0]) ;
       unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
       unary_change[1] += -alpha*(((*l)&1)-yv[0])*tmp[1];
-	
+
       p=(f32*)PyArray_GETPTR3(X,i,j,1);
       l=((i32*)PyArray_GETPTR3(Y,i,j,1));
       

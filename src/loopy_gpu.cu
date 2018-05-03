@@ -411,13 +411,9 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
-  f32* margbefore = (f32*)malloc(sizeof(f32)*dims[0]*dims[1]);
-  cudaMemcpy(margbefore, mu, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
-  f32* margafter = (f32*)malloc(sizeof(f32)*dims[0]*dims[1]);
   gpu_loopy_V_F__computeunary<<<dimGrid, singGrid, 0, stream[0]>>>(X, unary_w, unary_c);
   gpu_loopy_V_F__sumfactors<<<dimGrid, factorgrid, sizeof(f32)*n_factors*8, stream[0]>>>(F_V, V_F, unary_c, NULL, n_factors);
   gpu_loopy_V_F__marginal<<<dimGrid, singGrid, 0, stream[0]>>>(F_V, unary_c, mu, n_factors, stop_thresh, converged);
-  cudaMemcpy(margafter, mu, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
   
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);

@@ -79,7 +79,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 
 
   
-  f32 *unary_change = V_change + sizeof(f32)*n_factors*4*2;
+  f32 *unary_change = V_change + n_factors*4*2;
 
   i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
   i32 **rom_l = (i32**) malloc(sizeof(i32*)*n_samples);
@@ -191,8 +191,8 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   
   for (i=0;i < epochs;i++) {
     for (j=0;j < n_samples;j++){
-      //Assign the correct arguments, call loopyGPU
-      //Make training function..
+      dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
+      
       gdata.V_F = V_F_l[j];
       gdata.F_V = F_V_l[j];
       gdata.mu = mu_l[j];
@@ -220,16 +220,18 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(N_UNARY), cudaMemcpyDeviceToHost);
 
   //Time to clean up everything
-  //warning:bad free in here somewhere
   cudaFree(V_data);
   cudaFree(RE);
   cudaFree(CE);
-  cudaFree(ainc);
-  cudaFree(binc);
-  cudaFree(&(g_args.dev_L));
+
+  
+
+  cudaFree(g_args.dev_L);
   for (j=0;j<n_samples;j++){
     cudaFree(mu_l[j]);
     cudaFree(EY_l[j]);
+    cudaFree(X_l[j]);
+    cudaFree(Y_l[j]);
     cudaFree(com_l[j]);
     cudaFree(rom_l[j]);
     cudaFree(co_pairs_l[j]);
@@ -237,6 +239,10 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
     cudaFree(V_F_l[j]);
     cudaFree(F_V_l[j]);
   }
+  cudaFree(V_change);
+  cudaFree(ainc);
+  cudaFree(binc);
+  
   free(mu_l);
   free(EY_l);
   free(X_l);
@@ -283,21 +289,34 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
   dim3 threadGrid1(16,16,2);
 
-  i32 *buffer  = (i32*) malloc(sizeof(i32)*dims[0]*dims[1]);
-  cudaError_t err = cudaMemcpy(buffer, EY, sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
+  f32 *buffer  = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
+  cudaError_t err = cudaMemcpy(buffer, mu, sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
   printf("cerr %d\n",err);
   assert(err == cudaSuccess);
   
-  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2 >>> (mu, EY, Y, V, V_change, unary_change, ainc, binc, alpha*0.01, (i32) dims[0], (i32) dims[1], n_factors);
+  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2 >>> (mu, EY, X, Y, V, V_change, unary_change, ainc, binc, alpha, (i32) dims[0], (i32) dims[1], n_factors);
 
+  f32 *buffer1 = (f32*) malloc(sizeof(f32)*(n_factors*8+N_UNARY));
+  err = cudaMemcpy(buffer1, V_change , sizeof(f32)*(n_factors*8+N_UNARY), cudaMemcpyDeviceToHost);
+  printf("cerr %d\n",err);
+  assert(err == cudaSuccess);
+  
   dim3 blockGrid2(1);
   dim3 threadGrid2(n_factors*8 + N_UNARY);
-  gpu_update_params<<<blockGrid2, threadGrid2>>> (V, V_change);
+  gpu_update_params<<<blockGrid2, threadGrid2>>> (V, V_change, 0.01); //this also includes unary changes
+
+  f32 *buffer2 = (f32*) malloc(sizeof(f32)*(n_factors*8+N_UNARY));
+  err = cudaMemcpy(buffer2, V , sizeof(f32)*(n_factors*8+N_UNARY), cudaMemcpyDeviceToHost);
+  printf("cerr %d\n",err);
+  assert(err == cudaSuccess);
+  
   free(buffer);
+  free(buffer1);
+  free(buffer2);
 }
 
 
-__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
+__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
   //Add to mu given the V matrix
   // TODO: optimize by putting everything V into shared data.
   // Also, possibly EY
@@ -307,15 +326,19 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_cha
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
   i32 i;
+  i32 l;
+  i32 co = ((x)*limy + y);
+  if ( x >= limx || y >= limy) return;
+  if (Y[co*2+c]==0 && Y[co*2+c^1]==0) return;
   
   extern __shared__ char array[];
   //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
   //f32 *shared_mu;
   f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
-  i32 l;
+  
   __syncthreads();
-  if ( x >= limx || y >= limy) return;
-  i32 co = ((x)*limy + y);
+  
+
   f32 sum = -mu[2*co+c];
   f32 max;
   for (i=0;i<n_factors;i++) {
@@ -324,9 +347,9 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_cha
     sum += V[i*4 + (l)*2 + c];
   }
   for (i=0;i<n_factors;i++) {
-    if (x-ainc[i] < 0 || x-ainc[i]>=limx || y-binc[i] < 0 || y-binc[i] >= limy) continue;
+    if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
     
-    l= EY[COORD2(x-ainc[i],y-binc[i],limx,limy,1)];
+    l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
     sum += V[n_factors*4 + i*4 + (l)*2 + c];
   }
   
@@ -352,11 +375,13 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_cha
   //Softmax
 
   l = Y[co*2+c];
-  s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]);
+  s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
+
   
   change = -alpha*(l-s1);
-  atomicAdd(&unary_change[c*2], change*mu[co*2]);
-  atomicAdd(&unary_change[c*2+1], change*mu[co*2+1]);
+  //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
+  atomicAdd(&unary_change[c*2], change*X[co*2]);
+  atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
     
   //possible optimization
   for (i=0;i<n_factors;i++) {
@@ -367,14 +392,14 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, i32 *Y, f32 *V, f32 *V_cha
   }
 
   for (i=0;i<n_factors;i++) {
-    if (x-ainc[i] < 0 || x-ainc[i]>=limx || y-binc[i] < 0 || y-binc[i] >= limy) continue;
+    if (x+ainc[n_factors+i] < 0 || x+ainc[n_factors+i]>=limx || y+binc[n_factors+i] < 0 || y+binc[n_factors+i] >= limy) continue;
     
-    l= EY[COORD2(x-ainc[i],y-binc[i],limx,limy,1)];
+    l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
     //Atomic add
     atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
   }
 }
 
-__global__ void gpu_update_params(f32 *V, f32* V_change) {
-  V[threadIdx.x] += V_change[threadIdx.x];
+__global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr) {
+  V[threadIdx.x] += lr*V_change[threadIdx.x];
 }
