@@ -166,7 +166,13 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   err=cudaMemcpy(lpar->EY, EY_l[j], sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
   assert(err==cudaSuccess);
   
+  f32 *mubuf = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
+  err=cudaMemcpy(mubuf, mu_l[j], sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
+  assert(err==cudaSuccess);
 
+  free(mubuf);
+  
+  cudaDeviceSynchronize();
   cudaFree(V_data);
   cudaFree(RE);
   cudaFree(CE);
@@ -240,10 +246,19 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   //gpu_multiply<<<blockGrid2, threadGrid2, 0, stream[(curstream++)%n_streams]>>>(CE, n_elem );
 
   for (i=0;i<n_streams;i++) {
-    cudaStreamSynchronize(stream[i]);
     cudaStreamDestroy(stream[i]);
   }
-  
+
+
+  f32 *swiz_RE = (f32*) malloc(sizeof(f32) * n_factors*4);
+  f32 *swiz_CE = (f32*) malloc(sizeof(f32) * n_factors*4);
+
+  cudaMemcpy(swiz_RE, RE, sizeof(f32) * n_factors*4, cudaMemcpyDeviceToHost);
+  cudaMemcpy(swiz_CE, CE, sizeof(f32) * n_factors*4, cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+  free(swiz_RE);
+  free(swiz_CE);
+    
   i32 *converged;
   cudaMalloc(&converged,sizeof(i32));
   i32 _converged = 1;
@@ -437,9 +452,10 @@ __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c)
 }
 
 __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, const i32 * refimg, i32 n_factors ){
+  //THIS IS WRONG!
   extern __shared__ char array[];
   f32 *shared_f_v = (f32*) array;
-  f32 *shared_v_f = (f32*) (array + sizeof(f32)*n_factors*2*2);
+  f32 *shared_v_f = (f32*) (array + sizeof(f32)*n_factors*4);
 
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
@@ -458,11 +474,11 @@ __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, cons
   /* Sum up all messages */
   for (i=0;i<2*n_factors;i++) {
 //printf("KEK %d\n", i*2+c);
-    sum += shared_f_v[i*2+c]; //this is the problem!
+    sum += shared_f_v[i*2+c]; //
   }
+
   shared_v_f[n*2+c]=sum;
-  
-  __syncthreads();  
+  __syncthreads();
   // Normalize values
   sum = sum - 0.5 * (sum+shared_v_f[n*2+c^1]);
   V_F[origin]=sum;

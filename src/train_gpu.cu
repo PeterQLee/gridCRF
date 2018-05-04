@@ -328,75 +328,76 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f3
   i32 i;
   i32 l;
   i32 co = ((x)*limy + y);
-  if ( x >= limx || y >= limy) return;
-  if (Y[co*2+c]==0 && Y[co*2+c^1]==0) return;
-  
+  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
   extern __shared__ char array[];
   //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
   //f32 *shared_mu;
   f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
-  
+  f32 sum, max, s1, change;
   __syncthreads();
   
-
-  f32 sum = -mu[2*co+c];
-  f32 max;
-  for (i=0;i<n_factors;i++) {
-    if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
-    l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
-    sum += V[i*4 + (l)*2 + c];
-  }
-  for (i=0;i<n_factors;i++) {
-    if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
+  if (!cond) {
+    sum = -mu[2*co+c];
     
-    l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
-    sum += V[n_factors*4 + i*4 + (l)*2 + c];
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+      l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+      sum += V[i*4 + (l)*2 + c];
+    }
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
+    
+      l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
+      sum += V[n_factors*4 + i*4 + (l)*2 + c];
+    }
+    
+    //put sum into shared memory
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
   }
-  
-  //put sum into shared memory
-  shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
-  
   __syncthreads();
-
-  f32 s1, change;
-  if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
-    max = sum;
-  }
-  else{
-    max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+  if(!cond) {
+    
+    if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
+      max = sum;
+    }
+    else{
+      max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+    }
   }
   __syncthreads();
-  
-  s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
+  if (!cond) {  
+    s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
 
-  shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+  }
   __syncthreads();
   // Each thread handles the specific class
   //Softmax
+  if (!cond) {
+    l = Y[co*2+c];
+    s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
 
-  l = Y[co*2+c];
-  s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
-
-  
-  change = -alpha*(l-s1);
-  //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
-  atomicAdd(&unary_change[c*2], change*X[co*2]);
-  atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
     
-  //possible optimization
-  for (i=0;i<n_factors;i++) {
-    if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
-    l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
-    //Atomic add
-    atomicAdd(&V_change[i*4 + 2*l +c], change);
-  }
-
-  for (i=0;i<n_factors;i++) {
-    if (x+ainc[n_factors+i] < 0 || x+ainc[n_factors+i]>=limx || y+binc[n_factors+i] < 0 || y+binc[n_factors+i] >= limy) continue;
+    change = -alpha*(l-s1);
+    //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
+    atomicAdd(&unary_change[c*2], change*X[co*2]);
+    atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
     
-    l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
+    //possible optimization
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+      l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
     //Atomic add
-    atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+      atomicAdd(&V_change[i*4 + 2*l +c], change);
+    }
+    
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[n_factors+i] < 0 || x+ainc[n_factors+i]>=limx || y+binc[n_factors+i] < 0 || y+binc[n_factors+i] >= limy) continue;
+      
+      l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
+      //Atomic add
+      atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+    }
   }
 }
 
