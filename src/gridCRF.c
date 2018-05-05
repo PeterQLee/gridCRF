@@ -2,7 +2,7 @@
 #include "common.h"
 #include <assert.h>
 #include <stdio.h>
-#include <lbfgs.h>
+
 
 f32 ALPHA=0.001;
 
@@ -66,18 +66,6 @@ static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwd
   return (PyObject *)self;
 }
 
-static int progress ( void * instance,
-		      const lbfgsfloatval_t *x,
-		      const lbfgsfloatval_t *g,
-		      const lbfgsfloatval_t fx,
-		      const lbfgsfloatval_t xnorm,
-		      const lbfgsfloatval_t gnorm,
-		      const lbfgsfloatval_t step,
-		      int n,
-		      int k,
-		      int ls){
-  return 0;
-}
 static i32 count=0;
 //backend functions
 /* 

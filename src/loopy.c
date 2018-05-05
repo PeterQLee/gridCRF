@@ -380,14 +380,14 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
 	base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
 	r1=(__m256)_mm256_set1_pd(base);
 	for (n=0;n<n_factors*2;n+=4) {
-	  r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	  r2=(__m256)_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
 	  r2=_mm256_add_ps(r2,r1);
 	  _mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
 	}
       }
-      for (n=0;n<n_factors*2;n+=8) { //correct double counting
-	r1=_mm256_load_ps(&F_V[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
-	r2=_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+      for (n=0;n<n_factors*2;n+=4) { //correct double counting
+	r1=(__m256)_mm256_load_ps(&F_V[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	r2=(__m256)_mm256_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
 	r2=_mm256_sub_ps(r2,r1);
 	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
       }

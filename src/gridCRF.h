@@ -10,7 +10,6 @@
 #include "immintrin.h"
 //#include "avx_mathfun.h"
 #include "optimize.h"
-#include <lbfgs.h>
 #include "gridtypes.h"
 #include "loopy.h"
 #include "loopy_gpu.h"
