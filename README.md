@@ -8,7 +8,8 @@ Ensure that cuda, numpy (including development headers), and python development 
 Then to install:
 
 ```bash
-python3 setup.py build --dest-dir .
+python3 setup.py build
+python3 setup.py install
 ```
 
 Test the installation by typing the following in the python interpretor:
