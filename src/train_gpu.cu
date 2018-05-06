@@ -350,7 +350,9 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
   if (!cond) {  
     s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
     #if CATCH_NAN
-    printf("NAN CATCH %f %f %f\n", s1, shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c], max);
+    if (isnan(s1)) {
+      printf("NAN CATCH %f %f %f\n", s1, shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c], max);
+    }
     #endif
     shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
   }
@@ -366,7 +368,9 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
     //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
 
     #if CATCH_NAN
-    printf("Change %d %f\n", l, s1);
+    if (isnan(s1)){
+      printf("Change %d %f\n", l, s1);
+    }
     #endif
     atomicAdd(&unary_change[c*2], change*X[co*2]);
     atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
