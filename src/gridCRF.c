@@ -252,9 +252,9 @@ static void* _calculate_gradient(gradient_t *args) {
   
   //PyArrayObject *EY = args->EY;
   i32 *EY = args->lpar->EY;
-    
+  j=start[1];
   for (i=start[0];i<dims[0];i++) {
-    for (j=start[1];j<dims[1];j++) {
+    for (;j<dims[1];j++) {
       if (i==stop[0] && j==stop[1]) goto grad_finish;
       *((f64 *)yv)=0.0; // set outome to 0
       
@@ -293,8 +293,8 @@ static void* _calculate_gradient(gradient_t *args) {
       }
       max=-yv[0]>-yv[1]? -yv[0]:-yv[1];
     
-      yv[0]=exp(-yv[0]-max);
-      yv[1]=exp(-yv[1]-max);
+      yv[0]=expf(-yv[0]-max);
+      yv[1]=expf(-yv[1]-max);
       den=1/(yv[0]+yv[1]);
       yv[0]=yv[0]*den;
       yv[1]=yv[1]*den;
@@ -362,6 +362,7 @@ static void* _calculate_gradient(gradient_t *args) {
 	V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1]; //uninitliazed
       }
     }
+    j=0;
 
   }
  grad_finish:

@@ -76,9 +76,6 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 
   f32 *V_change;
   cudaMalloc(&V_change, sizeof(f32)*(n_factors*4*2+N_UNARY));
-
-
-  
   f32 *unary_change = V_change + n_factors*4*2;
 
   i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
@@ -261,67 +258,52 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   f32 *V_change = args->dev_V_change;
   f32 *unary_change = args->dev_unary_change;
   f32 *unary_w = args->gdata->unary_w;
-  f32 *mu = args->gdata->mu;
+  f32 *unary_c = args->gdata->unary_c;
   
   f32 *L = args->dev_L;
   npy_intp *dims = args->dims;
   i32 n_factors = args->self->n_factors;
-  //fille V_change with 0s
-  // fill unary_change with 0s
 
   i32 * EY = args->gdata->EY;
   f32 * V = args->gdata->V_data;
 
-
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);
   
   i32 n_elem;
   n_elem=(n_factors*4*2+N_UNARY);
   dim3 blockGrid(n_elem/128 + 1);
   dim3 threadGrid(128);
-  gpu_fill_value<<<blockGrid, threadGrid>>>(V_change,0.0, n_elem);
+  gpu_fill_value<<<blockGrid, threadGrid,0,stream>>>(V_change,0.0, n_elem);
   //note, this also fills unary_change
 
   f32 alpha = args->alpha;
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
-  gpu_loopy_V_F__computeunary<<<factorgrid, singGrid >>>(X, unary_w, mu);
+  gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
 
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
   dim3 threadGrid1(16,16,2);
 
-  f32 *buffer  = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
-  cudaError_t err = cudaMemcpy(buffer, mu, sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
-  printf("cerr %d\n",err);
-  assert(err == cudaSuccess);
   
-  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2 >>> (mu, EY, X, Y, V, V_change, unary_change, ainc, binc, alpha, (i32) dims[0], (i32) dims[1], n_factors);
-
-  f32 *buffer1 = (f32*) malloc(sizeof(f32)*(n_factors*8+N_UNARY));
-  err = cudaMemcpy(buffer1, V_change , sizeof(f32)*(n_factors*8+N_UNARY), cudaMemcpyDeviceToHost);
-  printf("cerr %d\n",err);
-  assert(err == cudaSuccess);
+  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream >>> (unary_c, EY, X, Y, V, V_change, unary_change, ainc, binc, alpha, (i32) dims[0], (i32) dims[1], n_factors);
   
   dim3 blockGrid2(1);
   dim3 threadGrid2(n_factors*8 + N_UNARY);
-  gpu_update_params<<<blockGrid2, threadGrid2>>> (V, V_change, 0.01); //this also includes unary changes
+  gpu_update_params<<<blockGrid2, threadGrid2,0 , stream>>> (V, V_change, 0.01); //this also includes unary changes
 
-  f32 *buffer2 = (f32*) malloc(sizeof(f32)*(n_factors*8+N_UNARY));
-  err = cudaMemcpy(buffer2, V , sizeof(f32)*(n_factors*8+N_UNARY), cudaMemcpyDeviceToHost);
-  printf("cerr %d\n",err);
-  assert(err == cudaSuccess);
-  
-  free(buffer);
-  free(buffer1);
-  free(buffer2);
+  cudaStreamDestroy(stream);
 }
 
 
-__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
-  //Add to mu given the V matrix
+__global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
+  #define CATCH_NAN
+  //last pitch idea. Forget cond until the very end
+  
   // TODO: optimize by putting everything V into shared data.
   // Also, possibly EY
 
-  //TODO: outof bounds occurs whenever blockIdx.x = 6 and threadidx = 2. Most likely there's been a miscalculation.
+  //TODO: check page 83, mentions that V_change and unary need to be properly aligned.
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
@@ -331,13 +313,13 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f3
   i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
   extern __shared__ char array[];
   //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
-  //f32 *shared_mu;
+
   f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
   f32 sum, max, s1, change;
   __syncthreads();
   
   if (!cond) {
-    sum = -mu[2*co+c];
+    sum = -unary_c[2*co+c];
     
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
@@ -367,7 +349,9 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f3
   __syncthreads();
   if (!cond) {  
     s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
-
+    #if CATCH_NAN
+    printf("NAN CATCH %f %f %f\n", s1, shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c], max);
+    #endif
     shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
   }
   __syncthreads();
@@ -380,6 +364,10 @@ __global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f3
     
     change = -alpha*(l-s1);
     //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
+
+    #if CATCH_NAN
+    printf("Change %d %f\n", l, s1);
+    #endif
     atomicAdd(&unary_change[c*2], change*X[co*2]);
     atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
     

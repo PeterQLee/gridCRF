@@ -453,14 +453,14 @@ __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c)
 
 __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, const i32 * refimg, i32 n_factors ){
   //THIS IS WRONG!
-  extern __shared__ char array[];
+  extern __shared__ f32 array[];
   f32 *shared_f_v = (f32*) array;
-  f32 *shared_v_f = (f32*) (array + sizeof(f32)*n_factors*4);
+  f32 *shared_v_f = (f32*) &array[n_factors*4];//prob doesn't fix
 
-  i32 x = blockIdx.x;
-  i32 y = blockIdx.y;
-  i32 n = threadIdx.x;
-  i32 c = threadIdx.y;
+  i32 x = blockIdx.x; //dims0
+  i32 y = blockIdx.y; //dims1
+  i32 n = threadIdx.x; // nfactors*2
+  i32 c = threadIdx.y; // 2
   i32 i=0;
   i32 origin = COORD3(x,y,n,gridDim.x, gridDim.y, 2*n_factors, 2) + c;
   // load factor to vvariables into shared memory
