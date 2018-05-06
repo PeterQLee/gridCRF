@@ -87,7 +87,7 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   #define L2 0
   #define LAMBDA 0.001
   
-  i64 h,i,j;
+  i64 h,i,j,k;
   //PyArrayObject *EY;
   const i32 N_UNARY=4;
   f32 *unary=(args->self)->unary;
@@ -109,7 +109,7 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   
 
 
-  const f32 lr=0.01;
+  //const f32 lr=0.01;
   f32 totL;
   i32 n_samples = PyList_Size(X_list);
 
@@ -130,11 +130,15 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   for (h=0;h<n_threads;h++ ){
     V_change_l[h] = _mm_malloc(sizeof(f32)*(n_factors*4*2+N_UNARY),32);
   }
-  
 
+  srand(0);
+  i32 *inds = indlist(n_samples);
+
+  
   for (i=0;i<epochs;i++) {
+    shuffle_inds(inds, n_samples);
     for (j=0;j<n_samples;j++){
-      dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+      dims=PyArray_DIMS(PyList_GetItem(X_list,inds[j]));
       args->dims=dims;
       s0=0;
       // get threads ready
@@ -151,20 +155,20 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	stop[2*h+1]=s0%dims[1];
 	targs[h].start=&start[2*h];
 	targs[h].stop=&stop[2*h];
-	targs[h].instance_index= &j;
-	targs[h].lpar->mu=mu_l[j];
-	targs[h].lpar->EY=EY_l[j];
+	targs[h].instance_index= &inds[j];
+	targs[h].lpar->mu=mu_l[inds[j]];
+	targs[h].lpar->EY=EY_l[inds[j]];
 
       }
       stop[n_threads*2-2]=dims[0];
       stop[n_threads*2-1]=dims[1];
 
-      printf("EY_[l] %x\n", EY_l[j]);
-      args->lpar->mu=mu_l[j];//redundant
-      args->lpar->EY=EY_l[j];
+      printf("EY_[l] %x\n", EY_l[inds[j]]);
+      args->lpar->mu=mu_l[inds[j]];//redundant
+      args->lpar->EY=EY_l[inds[j]];
 	
       // Do a loop iteration to get estimated outcomes with this parameterization
-      (*args->loopy_func)(args->self, (PyArrayObject *) PyList_GetItem(X_list,j), args->lpar, NULL);
+      (*args->loopy_func)(args->self, (PyArrayObject *) PyList_GetItem(X_list,inds[j]), args->lpar, NULL);
       
       for (h=0;h<n_threads;h++) {
 	pthread_create(&threads[h], NULL, (void*) _calculate_gradient, &targs[h]);
@@ -175,10 +179,11 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       
       totL=0.0f;
       /* update params */
+      f32 lr = 1.0/(dims[0]*dims[1]);
 #if L2
       for (h=0;h<n_threads;h++) {
-	for (j=0;j<n_factors*4*2;j++){
-	  V[j]+=lr*targs[h].V_change[j] - lr * LAMBDA * V[j] ;
+	for (k=0;k<n_factors*4*2;k++){
+	  V[k]+=lr*targs[h].V_change[k] - lr * LAMBDA * V[k] ;
 	}
 	unary[0]+=lr*targs[h].V_change[n_factors*4*2] - lr * LAMBDA * unary[0];
 	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1] - lr * LAMBDA * unary[1];
@@ -188,8 +193,8 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       }
 #else
       for (h=0;h<n_threads;h++) {
-	for (j=0;j<n_factors*4*2;j++){
-	  V[j]+=lr*targs[h].V_change[j];
+	for (k=0;k<n_factors*4*2;k++){
+	  V[k]+=lr*targs[h].V_change[k];
 	}
 	unary[0]+=lr*targs[h].V_change[n_factors*4*2];
 	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1];
@@ -377,7 +382,7 @@ static void* _calculate_gradient(gradient_t *args) {
 
 static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t *tpt){
   #define NUM_UNARY 4
-
+  #define VERBOSE 0 
   i64 depth= self->depth;
   i32 i,j,n,a,b,d,k;
   i32 its, epochs=tpt->epochs;//epochs=1000;
@@ -605,10 +610,11 @@ static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyA
 
 
   for (it=0;it< max_it && !converged;it++){
+    #if VERBOSE
     if (it%10==0){
       printf("it %d\n",it);
     }
-    
+    #endif
     l=1;
     for (x=0;x<dims[0];x++) {
       for (y=0;y<dims[1];y++) {
@@ -830,15 +836,14 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   i32 i;
   if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|if",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha) )) return NULL;
   //Needs to be a list of nd arrays
-  if (!PyList_Check(train)) return NULL;
-  if (!PyList_Check(lab)) return NULL;
-  f=PyList_GetItem(train,0);
-  if (!PyArray_Check(f) || PyArray_NDIM(f) !=3 || PyArray_DIMS(f)[2] !=2) return NULL;
-  f=PyList_GetItem(lab,0);
-  if (!PyArray_Check(f) || PyArray_NDIM(f) !=3 || PyArray_DIMS(f)[2] !=2) return NULL;
-  
-  //TODO: check num elements of f is the same
-  //TODO: Also need to ensure that Y is integer and X is f32
+  if (!PyList_Check(train)) {
+    PyErr_SetString(PyExc_ValueError, "train must be a list");
+    return NULL;
+  }
+  if (!PyList_Check(lab)) {
+    PyErr_SetString(PyExc_ValueError, "lab must be a list");
+    return NULL;
+  }
   
  //If all these checks have passed the input data is valid.
   //Now we can begin training iterations
@@ -858,7 +863,16 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
       PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
       return NULL;
     }
+    if (!PyArray_Check(X) || PyArray_NDIM(X) !=3 || PyArray_DIMS(X)[2] !=2) {
+      PyErr_SetString(PyExc_ValueError, "train must only contain 3 dimensional arrays, of a binary image");
+      return NULL;
+    }
+    if (!PyArray_Check(Y) || PyArray_NDIM(Y) !=3 || PyArray_DIMS(Y)[2] !=2) {
+      PyErr_SetString(PyExc_ValueError, "lab must only contain 3 dimensional arrays, of a binary image");
+      return NULL;
+    }
   }
+
   
   _train(self,(PyObject*)train,(PyObject*)lab,&tpt);
 
@@ -874,9 +888,12 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   lpar.n_threads=8;
 
 
-  static char * kwlist []= {"X","stop_thresh","max_its","refimg" ,NULL};
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fiO",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&refimg)) return NULL;
-  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 || PyArray_DIMS(test)[2] !=2) return NULL;
+  static char * kwlist []= {"X","stop_thresh","max_its","n_threads" ,NULL};
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fii",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&(lpar.n_threads))) return NULL;
+  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 || PyArray_DIMS(test)[2] !=2) {
+    PyErr_SetString(PyExc_ValueError, "Input must be a 3 dimensional array");
+    return NULL;
+  }
   if (PyArray_TYPE(test) != NPY_FLOAT32) {
     PyErr_SetString(PyExc_TypeError, "Data must be 32-bit floats");
     return NULL;

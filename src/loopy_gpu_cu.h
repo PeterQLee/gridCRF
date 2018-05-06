@@ -2,7 +2,7 @@
 #define LOOPY_GPU_CU_H
 #include "loopy.h"
 #include "loopy_gpu.h"
-
+#include "common.h"
 
 i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_t *lpar, PyArrayObject *refimg);
 void gpu_loopy_F_V(loopygpu_t *targs);

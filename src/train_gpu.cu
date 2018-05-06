@@ -5,6 +5,7 @@ extern "C" {
 #define N_UNARY 4
 //TODO: copy V_data, to allocated V_data
 extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
+  #define VERBOSE 0
   i32 h,i,j;
 
   gridCRF_t *self = args->self;
@@ -178,37 +179,43 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   gdata.RE = RE;
   gdata.CE = CE;
   gdata.unary_w = unary_w;
-
+  
   g_args.gdata = &gdata;
   lpar.gdata = &gdata;
 
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);
   }
+
+  //shuffle the training examples
+  srand(0);
+  i32 *inds = indlist(n_samples);
+
   
   for (i=0;i < epochs;i++) {
+    shuffle_inds(inds, n_samples);
     for (j=0;j < n_samples;j++){
-      dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
+      dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,inds[j]));
       
-      gdata.V_F = V_F_l[j];
-      gdata.F_V = F_V_l[j];
-      gdata.mu = mu_l[j];
-      gdata.com = com_l[j];
-      gdata.rom = rom_l[j];
-      gdata.co_pairs = co_pairs_l[j];
-      gdata.unary_c = unary_c_l[j];
-      gdata.EY = EY_l[j];
-      gdata.X = X_l[j];
+      gdata.V_F = V_F_l[inds[j]];
+      gdata.F_V = F_V_l[inds[j]];
+      gdata.mu = mu_l[inds[j]];
+      gdata.com = com_l[inds[j]];
+      gdata.rom = rom_l[inds[j]];
+      gdata.co_pairs = co_pairs_l[inds[j]];
+      gdata.unary_c = unary_c_l[inds[j]];
+      gdata.EY = EY_l[inds[j]];
+      gdata.X = X_l[inds[j]];
 
-      g_args.dev_X = X_l[j];
-      g_args.dev_Y = Y_l[j];
+      g_args.dev_X = X_l[inds[j]];
+      g_args.dev_Y = Y_l[inds[j]];
       g_args.dims= dims;
 
-      loopyGPU(self, (PyArrayObject*)PyList_GetItem(X_list,j), &lpar, NULL);
+      loopyGPU(self, (PyArrayObject*)PyList_GetItem(X_list,inds[j]), &lpar, NULL);
       gpu_calculate_gradient(&g_args);
     }
   }
-  
+  free(inds);
 
   
   // copy V_data back to numpy space...
@@ -290,14 +297,14 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   
   dim3 blockGrid2(1);
   dim3 threadGrid2(n_factors*8 + N_UNARY);
-  gpu_update_params<<<blockGrid2, threadGrid2,0 , stream>>> (V, V_change, 0.01); //this also includes unary changes
+  gpu_update_params<<<blockGrid2, threadGrid2,0 , stream>>> (V, V_change, 1.0/(dims[0]*dims[1])); //this also includes unary changes
 
   cudaStreamDestroy(stream);
 }
 
 
 __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
-  #define CATCH_NAN
+
   //last pitch idea. Forget cond until the very end
   
   // TODO: optimize by putting everything V into shared data.
@@ -349,11 +356,7 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
   __syncthreads();
   if (!cond) {  
     s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
-    #if CATCH_NAN
-    if (isnan(s1)) {
-      printf("NAN CATCH %f %f %f\n", s1, shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c], max);
-    }
-    #endif
+
     shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
   }
   __syncthreads();
@@ -367,11 +370,7 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
     change = -alpha*(l-s1);
     //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
 
-    #if CATCH_NAN
-    if (isnan(s1)){
-      printf("Change %d %f\n", l, s1);
-    }
-    #endif
+
     atomicAdd(&unary_change[c*2], change*X[co*2]);
     atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
     

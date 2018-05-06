@@ -2,6 +2,7 @@
 #include "loopy_gpu.h"
 
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
+  #define VERBOSE 0
   //fix type
 
   //loopy belief propagation using CPU
@@ -142,9 +143,11 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     
   }
   for (it=0;it< max_it;it++){
+    #if VERBOSE
     if (it%10==0){
       printf("it %d\n",it);
     }
+    #endif
     converged = 1;
     
     /* Calculate factor to variable messages */

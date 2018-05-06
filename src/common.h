@@ -3,6 +3,6 @@
 #include <stdlib.h>
 #include "types.h"
 
-i64 *indlist(i64 n);
-void shuffle_inds (i64* arr, i64 size);
+i32 *indlist(i32 n);
+void shuffle_inds (i32* arr, i32 size);
 #endif

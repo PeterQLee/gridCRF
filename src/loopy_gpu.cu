@@ -166,11 +166,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   err=cudaMemcpy(lpar->EY, EY_l[j], sizeof(i32)*dims[0]*dims[1], cudaMemcpyDeviceToHost);
   assert(err==cudaSuccess);
   
-  f32 *mubuf = (f32*) malloc(sizeof(f32)*dims[0]*dims[1]*2);
-  err=cudaMemcpy(mubuf, mu_l[j], sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyDeviceToHost);
-  assert(err==cudaSuccess);
 
-  free(mubuf);
   
   cudaDeviceSynchronize();
   cudaFree(V_data);
@@ -196,6 +192,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   return lpar->EY;
 }
 extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_t *lpar, PyArrayObject *refimg){
+  #define VERBOSE 0
   npy_intp * dims= PyArray_DIMS(X_py);
   i32 n_factors=self->n_factors;
   i32 max_it=lpar->max_its,it;
@@ -238,26 +235,14 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   n_elem = n_factors*4;
   dim3 blockGrid2(n_elem/128 + 1);
   dim3 threadGrid2(32,2,2);
-  //cudaMemcpy(RE, V_data, n_elem * sizeof(f32), cudaMemcpyDeviceToDevice); //need to swizzle here
+ 
   gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(RE, V_data, n_factors, n_elem);
   gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(CE, V_data + n_elem, n_factors, n_elem);
-  //cudaMemcpy(CE, V_data + n_elem, n_elem * sizeof(f32), cudaMemcpyDeviceToDevice);
-  //gpu_multiply<<<blockGrid2, threadGrid2, 0, stream[(curstream++)%n_streams]>>>(RE, n_elem );
-  //gpu_multiply<<<blockGrid2, threadGrid2, 0, stream[(curstream++)%n_streams]>>>(CE, n_elem );
-
+ 
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);
   }
 
-
-  f32 *swiz_RE = (f32*) malloc(sizeof(f32) * n_factors*4);
-  f32 *swiz_CE = (f32*) malloc(sizeof(f32) * n_factors*4);
-
-  cudaMemcpy(swiz_RE, RE, sizeof(f32) * n_factors*4, cudaMemcpyDeviceToHost);
-  cudaMemcpy(swiz_CE, CE, sizeof(f32) * n_factors*4, cudaMemcpyDeviceToHost);
-  cudaDeviceSynchronize();
-  free(swiz_RE);
-  free(swiz_CE);
     
   i32 *converged;
   cudaMalloc(&converged,sizeof(i32));
@@ -274,16 +259,19 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
 
 
   for (it = 0; it < max_it; it++){
+#if VERBOSE
     if (it%10==0){
       printf("gpu it %d\n", it);
     }
+    #endif
     gpu_loopy_F_V(&targs);
     gpu_loopy_V_F(&targs);
     
     if (_converged) break;
   }
+  #if VERBOSE
   printf("converged %d %f\n",_converged, lpar->stop_thresh);
-
+  #endif
   i32 *EY = gdata->EY;
 
   
@@ -510,7 +498,7 @@ __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 
 __global__ void gpu_loopy_V_F__label(f32 *mu, i32 *EY, i32 n_factors) {
 
   /* Computes the predicted label given the values */
-  extern __shared__ char array[];
+  extern __shared__ f32 array[];
   f32 *shared_marginal = (f32*) array;
   i32 i;
   i32 x = blockIdx.x;
