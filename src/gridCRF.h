@@ -1,5 +1,5 @@
-#ifndef SQUARECRF_H
-#define SQUARECRF_H
+#ifndef GRIDCRF_H
+#define GRIDCRF_H
 #define LBFGS_FLOAT 32
 
 #include <Python.h>
@@ -13,13 +13,9 @@
 #include "gridtypes.h"
 #include "loopy.h"
 #include "loopy_gpu.h"
+#include "train_cpu.h"
 #include "train_gpu.h"
 
-
-static void* _calculate_gradient(gradient_t *args);
-
-static void CPU_train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t tpt);
-static i32* _loopyCPU(gridCRF_t* self, PyArrayObject *X, loopy_params_t *lpar,PyArrayObject *refimg);
 
 static PyObject* fit (gridCRF_t * self, PyObject *args, PyObject *kws);
 static PyObject* predict(gridCRF_t *self, PyObject *args, PyObject *kws);
