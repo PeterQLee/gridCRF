@@ -3,6 +3,14 @@
 #include "gridtypes.h"
 #include "loopy_gpu.h"
 
+typedef  enum {ENTROPY,
+	       DICE
+}error_func_e;
+
+typedef struct {
+  f32 *prod, *sum, *prob;
+} dice_error_data_t;
+
 
 typedef struct {
   gridCRF_t *self;
@@ -20,6 +28,9 @@ typedef struct {
   gpu_loopy_params_t *lpar;
   f32 *dev_L;
   f32 host_L;
+  error_func_e error_type;
+  void * error_data; 
+
 }gpu_gradient_t;
 
 void GPU_grad_descent(gradient_t *args, i32 epochs, i32 dummy);

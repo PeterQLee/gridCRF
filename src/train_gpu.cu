@@ -283,22 +283,30 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   dim3 threadGrid(128);
   gpu_fill_value<<<blockGrid, threadGrid,0,stream>>>(V_change,0.0, n_elem);
   //note, this also fills unary_change
-
   f32 alpha = args->alpha;
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
   gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
-
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
   dim3 threadGrid1(16,16,2);
 
-  
-  gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream >>> (unary_c, EY, X, Y, V, V_change, unary_change, ainc, binc, alpha, (i32) dims[0], (i32) dims[1], n_factors);
+  switch (args->error_type){
+  case ENTROPY:
+
+    gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream >>> (unary_c, EY, X, Y, V, V_change, unary_change, ainc, binc, alpha, (i32) dims[0], (i32) dims[1], n_factors);
+    
+
+    break;
+  case DICE:
+    dice_error_data_t *error_data = (dice_error_data_t *) args->error_data;
+    gpu_dice_prob<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream>>>(unary_c, EY, V, Y, error_data->prob, ainc, binc, alpha, limx, limy, n_factors);
+    gpu_dice_intermediate_summation<<<blockGrid1, threadGrid1, 0, stream>>>(error_data->prob, Y, error_data->prod, error_data->sum);
+    gpu_dice_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*4, stream>>>(error_data->prob, error_data->prod, error_data->sum, X, Y, V_change, unary_change, ainc, binc, alpha, limx, limy, n_factors);
+  }
   
   dim3 blockGrid2(1);
   dim3 threadGrid2(n_factors*8 + N_UNARY);
-  gpu_update_params<<<blockGrid2, threadGrid2,0 , stream>>> (V, V_change, 1.0/(dims[0]*dims[1])); //this also includes unary changes
-
+  gpu_update_params<<<blockGrid2, threadGrid2,0 , stream>>> (V, V_change, 1.0/(dims[0]*dims[1])); //this also includes unary changes 
   cudaStreamDestroy(stream);
 }
 
@@ -392,6 +400,141 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
   }
 }
 
+__global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, i32 *V, i32 *Y, f32 *p, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
+  // Calculates probability for dice error
+  i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c= threadIdx.z;
+  i32 i;
+  i32 l;
+  i32 co = ((x)*limy + y);
+  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  extern __shared__ char array[];
+  //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
+
+  f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
+  f32 sum, max, s1, change;
+  __syncthreads();
+  
+  if (!cond) {
+    sum = -unary_c[2*co+c];
+    
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+      l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+      sum += V[i*4 + (l)*2 + c];
+    }
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
+    
+      l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
+      sum += V[n_factors*4 + i*4 + (l)*2 + c];
+    }
+    
+    //put sum into shared memory
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
+  }
+  __syncthreads();
+  if(!cond) {
+    
+    if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
+      max = sum;
+    }
+    else{
+      max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+    }
+  }
+  __syncthreads();
+  if (!cond) {  
+    s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
+
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+  }
+  __syncthreads();
+  // Each thread handles the specific class
+  //Softmax
+  if (!cond) {
+    s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
+    p[co+c] = s1;
+  }
+}
+
+__global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, f32 *prod, f32 *sum) {
+  i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c= threadIdx.z;
+  i32 i;
+  i32 co = ((x)*limy + y);
+  i32 l = Y[co*2+c];
+  f32 prob = p[co*2+c];
+  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+
+  if (!cond) {
+    if (l) {
+      atomicAdd(&prod[c], prob);
+    }
+    atomicAdd(&sum[c], l+prob*prob);
+  }
+}
+
+__global__ void gpu_dice_partial(f32 *p, f32 *prod, f32 *sum, f32 *X, i32 *Y, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors) {
+  extern __shared__ char array [];
+
+  f32 *shared_dL_dp = (f32*) array;
+  f32 *shared_prob = &shared_dL_dp[16*16*2];
+  i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c= threadIdx.z;
+  i32 i;
+  i32 co = ((x)*limy + y);
+  
+  i32 lc = Y[co*2+c];
+  f32 prob = p[co*2+c];
+  shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c] = prob;
+  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+
+  
+  f32 prodc = prod[c];
+  f32 sumc = sum[c];
+
+  /* Calculate partial ps */
+  f32 dL_dp0, dL_dp1;
+  if (!cond) {
+    f32 dL_dpc = (-2* lc * sumc  + 4 * prob * prodc)/ (sumc*sumc);
+    shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c] = dL_dpc;
+  }
+  __syncthreads();
+
+  /* calculate partial Vs*/
+  f32 dp_dc, dp_dnc;
+  dp_dc = shared_prob[c] - shared_prob[c]*shared_prob[c];
+  dp_dnc = -shared_prob[c]*shared_prob[c^1];
+
+  f32 change = dp_dc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c] + dp_dnc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c^1];
+
+
+  /* Same as entropy */
+  /**/
+  atomicAdd(&unary_change[c*2], change*X[co*2]);
+  atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
+
+  //possible optimization
+  for (i=0;i<n_factors;i++) {
+    if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+    l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+    //Atomic add
+    atomicAdd(&V_change[i*4 + 2*l +c], change);
+  }
+  
+  for (i=0;i<n_factors;i++) {
+    if (x+ainc[n_factors+i] < 0 || x+ainc[n_factors+i]>=limx || y+binc[n_factors+i] < 0 || y+binc[n_factors+i] >= limy) continue;
+      
+    l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
+    //Atomic add
+    atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+  }
+}
 __global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr) {
   V[threadIdx.x] += lr*V_change[threadIdx.x];
 }
+
