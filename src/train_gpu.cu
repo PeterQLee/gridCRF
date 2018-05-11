@@ -299,9 +299,13 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
     break;
   case DICE:
     dice_error_data_t *error_data = (dice_error_data_t *) args->error_data;
+    
     gpu_dice_prob<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream>>>(unary_c, EY, V, Y, error_data->prob, ainc, binc, alpha, limx, limy, n_factors);
+    
     gpu_dice_intermediate_summation<<<blockGrid1, threadGrid1, 0, stream>>>(error_data->prob, Y, error_data->prod, error_data->sum);
+    
     gpu_dice_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*4, stream>>>(error_data->prob, error_data->prod, error_data->sum, X, Y, V_change, unary_change, ainc, binc, alpha, limx, limy, n_factors);
+    
   }
   
   dim3 blockGrid2(1);
@@ -510,6 +514,7 @@ __global__ void gpu_dice_partial(f32 *p, f32 *prod, f32 *sum, f32 *X, i32 *Y, f3
   dp_dc = shared_prob[c] - shared_prob[c]*shared_prob[c];
   dp_dnc = -shared_prob[c]*shared_prob[c^1];
 
+  // TODO: this may need to be negated.
   f32 change = dp_dc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c] + dp_dnc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c^1];
 
 

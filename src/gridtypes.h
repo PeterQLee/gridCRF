@@ -46,21 +46,6 @@ typedef struct{
 
 
 
-typedef struct {
-  gridCRF_t *self;
-  f32 *V_change, *unary_change;
-  PyObject *X_list, *Y_list;
-  i32 *ainc, *binc;
-  npy_intp * dims;
-  npy_intp * start;
-  npy_intp * stop;
-  i32 num_params, n_factors;
-  f32 alpha;
-  PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
-  loopy_params_t *lpar;
-  f32 L;
-  i32 *instance_index;
-}gradient_t;
 
 
 typedef struct{
@@ -69,5 +54,8 @@ typedef struct{
   i32 gpu;
 }train_params_t;
 
+typedef  enum {ENTROPY,
+	       DICE
+}error_func_e
 #endif
 

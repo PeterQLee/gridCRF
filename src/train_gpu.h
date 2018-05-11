@@ -3,10 +3,6 @@
 #include "gridtypes.h"
 #include "loopy_gpu.h"
 
-typedef  enum {ENTROPY,
-	       DICE
-}error_func_e;
-
 typedef struct {
   f32 *prod, *sum, *prob;
 } dice_error_data_t;

@@ -244,8 +244,16 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
  [-0.00749042  0.00749041  0.04241513 -0.04241513]
  [-0.01887376  0.01887375  0.05379847 -0.05379847]]
 
-* two bugs
-1. start=0, start=1 for multithreading
-2. training er
 
 * Ensure that input is C aligned memory.
+
+
+* Dice error training
+
+** TODO allocate error data for dice in both cpu and gpu
+
+** TODO Finish gpu implementation
+
+** TODO test
+** TODO  Warning, watch out for nans, these could occur when sum = 0
+
