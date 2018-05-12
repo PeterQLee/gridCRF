@@ -1,3 +1,18 @@
+/*
+Copyright 2018 Peter Q. Lee
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
 #include "gridCRF.h"
 #include "common.h"
 #include <assert.h>
@@ -76,6 +91,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   i32 *l;
   i64 n_factors=self->n_factors;
   f32 *V = self->V_data;
+
   f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+NUM_UNARY),32);
 
   n=self->depth;
@@ -129,6 +145,10 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
     }
   }
 
+  /* Reset parameters */
+  memset(V, 0, sizeof(f32)*n_factors*8);
+  memset(unary, 0, sizeof(f32)*4);
+  
 
   loopy_params_t lpar;
   lpar.mu=NULL;
