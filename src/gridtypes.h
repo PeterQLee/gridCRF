@@ -52,10 +52,12 @@ typedef struct{
   i32 epochs;
   f32 alpha;
   i32 gpu;
+  i32 error_func; //0 = entropy, 1 = dice
 }train_params_t;
 
 typedef  enum {ENTROPY,
 	       DICE
-}error_func_e
+}error_func_e;
+
 #endif
 

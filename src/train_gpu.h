@@ -2,10 +2,11 @@
 #define TRAIN_GPU_H
 #include "gridtypes.h"
 #include "loopy_gpu.h"
+#include "train_cpu.h"
 
 typedef struct {
   f32 *prod, *sum, *prob;
-} dice_error_data_t;
+} gpu_dice_error_data_t;
 
 
 typedef struct {
@@ -24,7 +25,7 @@ typedef struct {
   gpu_loopy_params_t *lpar;
   f32 *dev_L;
   f32 host_L;
-  error_func_e error_type;
+  error_func_e error_func;
   void * error_data; 
 
 }gpu_gradient_t;

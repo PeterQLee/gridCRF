@@ -1,14 +1,16 @@
 #ifndef TRAIN_CPU_H
 #define TRAIN_CPU_H
 #include "gridtypes.h"
+#include <pthread.h>
+#include "common.h"
 #include "loopy.h"
 
 typedef struct {
   f32 *prod, *sum, *prob;
-  pthread_mutex_t *sumlock, *problock;
+  pthread_mutex_t *sumlock, *prodlock;
   pthread_barrier_t *sync_sum;
 
-}cpu_dice_data;
+}cpu_dice_data_t;
 
 typedef struct {
   gridCRF_t *self;
@@ -28,7 +30,7 @@ typedef struct {
   void* error_data;
 }gradient_t;
 
-static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads);
+void grad_descent(gradient_t *args,i64 epochs,i64 n_threads);
 static void* _calculate_gradient(gradient_t *args);
 
 #endif

@@ -250,7 +250,7 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 
 * Dice error training
 
-** TODO allocate error data for dice in both cpu and gpu
+** DONE allocate error data for dice in both cpu and gpu
 
 ** TODO Finish gpu implementation
 

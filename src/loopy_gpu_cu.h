@@ -1,6 +1,5 @@
 #ifndef LOOPY_GPU_CU_H
 #define LOOPY_GPU_CU_H
-#include "loopy.h"
 #include "loopy_gpu.h"
 #include "common.h"
 

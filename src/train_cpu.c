@@ -11,7 +11,7 @@ Proecedure is the following:
 4. For each epoch; calculate the change based on cross entropy
 5. In each epoch, update the parameters.
  */
-static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
+void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   /*TODO: 
     Find out if we can avoid doing multiple loopy BPs by reusing the energies from the last iteration
 */
@@ -26,13 +26,13 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   pthread_t *threads= malloc(sizeof(pthread_t)*n_threads);
   npy_intp *dims=args->dims;
   
-  i32 num_params= args->num_params;
+
   i64 n_factors=args->n_factors;
   gradient_t *targs=malloc(sizeof(gradient_t) * n_threads);
   npy_intp *start= malloc(sizeof(npy_intp)*n_threads*2);
   npy_intp *stop= malloc(sizeof(npy_intp)*n_threads*2);
   PyObject *X_list=args->X_list;
-  f32 *V_change;
+
   
   npy_intp s0;
 
@@ -47,11 +47,11 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   /* Allocate memory for threads */
   f32 **V_change_l = (f32**) malloc(sizeof(f32*) * n_threads);
   f32 **mu_l = (f32 **) malloc(sizeof(f32*) * n_samples);
-  f32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
+  i32 **EY_l = (i32 **) malloc(sizeof(i32*) * n_samples);
 
 
   for (j=0;j<n_samples;j++){
-    dims=PyArray_DIMS(PyList_GetItem(X_list,j));
+    dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
     mu_l[j] = (f32*) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
     EY_l[j] = (i32*) _mm_malloc(sizeof(i32)*dims[0]*dims[1],32); //These aren't getting set somewhere...
     
@@ -64,20 +64,48 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
   srand(0);
   i32 *inds = indlist(n_samples);
-  void *error_data;
+  void **error_data = malloc(sizeof(void*)*n_samples);
+  f32 *prod, *sum, *tmpprob;
+  cpu_dice_data_t *dice_error_tmp;
+  
+  switch(args->error_func) {
+  case DICE:
+    prod = (f32*) malloc(sizeof(f32)*4);
+    sum = &prod[2];
+    pthread_mutex_t *sumlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
+    pthread_mutex_t *prodlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
+    pthread_barrier_t sync_sum;
+    pthread_barrier_init(&sync_sum,NULL,1);
+    for (h=0;h<n_threads;h++) {
+      pthread_mutex_init(&sumlocks[h], NULL);
+      pthread_mutex_init(&prodlocks[h], NULL);
+    }
 
-  if (args->error_func == DICE) {
-    cpu_dice_data dice_error_tmp;
-    dice_error_tmp.prod = (f32*) malloc(sizeof(f32)*4);
-    dice_error_tmp.sum = &dice_error_tmp.prod[2];
-    malloc(sizeof(f32)*
+    for (j=0;j<n_samples;j++) {
+      dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
+      dice_error_tmp = (cpu_dice_data_t*) malloc(sizeof(cpu_dice_data_t));
+      tmpprob = (f32*) malloc(sizeof(f32)* dims[0]*dims[1]*2);
+      dice_error_tmp->prod = prod;
+      dice_error_tmp->sum = sum;
+      dice_error_tmp->prob = tmpprob;
+      dice_error_tmp->sumlock = sumlocks;
+      dice_error_tmp->prodlock = prodlocks;
+      dice_error_tmp->sync_sum = &sync_sum;
+      
+      error_data[j] = (void*) dice_error_tmp;
+    }
+    
+    
+    break;
+  case ENTROPY:
+    break;
     
   }
   
   for (i=0;i<epochs;i++) {
     shuffle_inds(inds, n_samples);
     for (j=0;j<n_samples;j++){
-      dims=PyArray_DIMS(PyList_GetItem(X_list,inds[j]));
+      dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,inds[j]));
       args->dims=dims;
       s0=0;
       // get threads ready
@@ -97,18 +125,28 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	targs[h].instance_index= &inds[j];
 	targs[h].lpar->mu=mu_l[inds[j]];
 	targs[h].lpar->EY=EY_l[inds[j]];
-
-
+	targs[h].error_data = error_data[inds[j]];
+	
       }
+      switch (args->error_func) {
+      case DICE:
+	((cpu_dice_data_t*)error_data[inds[j]])->sum[0] = 0.0f;
+	((cpu_dice_data_t*)error_data[inds[j]])->sum[1] = 0.0f;
+	((cpu_dice_data_t*)error_data[inds[j]])->prod[0] = 0.0f;
+	((cpu_dice_data_t*)error_data[inds[j]])->prod[1] = 0.0f;
+	break;
+      case ENTROPY:
+	break;
+      }      
       stop[n_threads*2-2]=dims[0];
       stop[n_threads*2-1]=dims[1];
 
-      printf("EY_[l] %x\n", EY_l[inds[j]]);
       args->lpar->mu=mu_l[inds[j]];//redundant
       args->lpar->EY=EY_l[inds[j]];
+
 	
       // Do a loop iteration to get estimated outcomes with this parameterization
-      (*args->loopy_func)(args->self, (PyArrayObject *) PyList_GetItem(X_list,inds[j]), args->lpar, NULL);
+      (*args->loopy_func)(args->self, (PyArrayObject *) (PyArrayObject*)PyList_GetItem(X_list,inds[j]), args->lpar, NULL);
       
       for (h=0;h<n_threads;h++) {
 	pthread_create(&threads[h], NULL, (void*) _calculate_gradient, &targs[h]);
@@ -148,7 +186,21 @@ static void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
     }
   }
-
+  switch(args->error_func) {
+  case DICE:
+    free(((cpu_dice_data_t*)error_data[0])->prod);
+    free(((cpu_dice_data_t*)error_data[0])->prodlock);
+    free(((cpu_dice_data_t*)error_data[0])->sumlock);
+    for (j=0;j<n_samples;j++) {
+      free(((cpu_dice_data_t*)error_data[j])->prob);
+      free((cpu_dice_data_t*)error_data[j]);
+    }
+    free(error_data);
+    break;
+  case ENTROPY:
+    break;
+  }
+    
   for (j=0;j<n_samples;j++) {
     _mm_free(mu_l[j]);
     _mm_free(EY_l[j]);
@@ -177,7 +229,7 @@ static void* _calculate_gradient(gradient_t *args) {
   npy_intp *start=args->start, *stop=args->stop;
   f32 *V_change = args->V_change;
   f32 *unary_change = args->unary_change;
-  f32 L=0.0f,max=0.0f,den,*p;
+  f32 L=0.0f,max=0.0f,den;
   f32 yv [2];
   f32 change[2];
   f32 *v;
@@ -194,7 +246,7 @@ static void* _calculate_gradient(gradient_t *args) {
   i32 n=0;
   f32 *tmp;
   f32 alpha=args->alpha;
-  printf("dims %d %d\n",dims[0],dims[1]);
+  printf("dims %ld %ld\n",dims[0],dims[1]);
   
   //PyArrayObject *EY = args->EY;
   i32 *EY = args->lpar->EY;
@@ -236,7 +288,7 @@ static void* _calculate_gradient(gradient_t *args) {
 	  l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
 
 	  v=&V[n_factors*4 + n*4 + 2*((*l)&1)];
-	  f32 test = v[0];
+
 	  yv[0] += v[0];//uninitialized
 	  yv[1] += v[1];
 	}
@@ -250,7 +302,7 @@ static void* _calculate_gradient(gradient_t *args) {
 
 	// l here is the true label
 	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
-	p=(f32*)PyArray_GETPTR3(X,i,j,0);
+	
 	//L-= (*l) * log(yv[0]) /dims[0]/dims[1];
 	if (*l && yv[0]!=0.0f) {
 	  if (isinf(yv[0])) {
@@ -265,7 +317,7 @@ static void* _calculate_gradient(gradient_t *args) {
 	unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
 	unary_change[1] += -alpha*(((*l)&1)-yv[0])*tmp[1];
 
-	p=(f32*)PyArray_GETPTR3(X,i,j,1);
+	
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
       
 	//L-= (*l)* log(yv[1])/dims[0]/dims[1];
@@ -282,7 +334,7 @@ static void* _calculate_gradient(gradient_t *args) {
 
 	//printf("yv %f %f\n",yv[0],yv[1]);
 	change[1] = -alpha * (((*l)&1)-yv[1]);
-      
+
 	unary_change[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
 	unary_change[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
 	//printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
@@ -309,6 +361,7 @@ static void* _calculate_gradient(gradient_t *args) {
 	  l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
 	  V_change[n_factors*4 +n*4 + 2*((*l)&1)] += change[0]; //uninitalized
 	  V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1]; //uninitliazed
+
 	}
       }
       j=0;
@@ -316,9 +369,12 @@ static void* _calculate_gradient(gradient_t *args) {
     }
     break;
 
-    
+    /* Error: Dice
+       Code for performing dice error minimization
+    */
   case DICE:
     j=start[1];
+    cpu_dice_data_t *error_data = (cpu_dice_data_t *) args->error_data;
     for (i=start[0];i<dims[0];i++) {
       for (;j<dims[1];j++) {
 	if (i==stop[0] && j==stop[1]) goto dice_sync;
@@ -353,7 +409,7 @@ static void* _calculate_gradient(gradient_t *args) {
 	  l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
 
 	  v=&V[n_factors*4 + n*4 + 2*((*l)&1)];
-	  f32 test = v[0];
+
 	  yv[0] += v[0];//uninitialized
 	  yv[1] += v[1];
 	}
@@ -367,51 +423,54 @@ static void* _calculate_gradient(gradient_t *args) {
 
 	// l here is the true label
 	l=((i32*)PyArray_GETPTR3(Y,i,j,0));
-	p=(f32*)PyArray_GETPTR3(X,i,j,0);
-	error_data->prob[COORD2(i,j,dims[0],dims[1],2)] = p;
+	error_data->prob[COORD2(i,j,dims[0],dims[1],2)] = yv[0];
 
 	//modify values
-	pthread_mutex_lock(&(error_data->sumlock[0]));
-	error_data->sum[0] += p*p+l;
-	pthread_mutex_unlock(&(error_data->sumlock[0]));
+	//pthread_mutex_lock(&(error_data->sumlock[0]));
+	error_data->sum[0] += yv[0]*yv[0]+(*l);
+	//pthread_mutex_unlock(&(error_data->sumlock[0]));
 
-	pthread_mutex_lock(&(error_data->prodlock[0]));
-	error_data->prod[0] += p*l;
-	pthread_mutex_unlock(&(error_data->prodlock[0]));
+	//pthread_mutex_lock(&(error_data->prodlock[0]));
+	error_data->prod[0] += yv[0]*(*l);
+	//pthread_mutex_unlock(&(error_data->prodlock[0]));
 	
 
-	p=(f32*)PyArray_GETPTR3(X,i,j,1);
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
-	error_data->prob[COORD2(i,j,dims[0],dims[1],2) + 1] = p;
+	error_data->prob[COORD2(i,j,dims[0],dims[1],2) + 1] = yv[1];
+	if (yv[0]) {L=0.0;}
+	if (yv[1]) {L=0.0;}
+	//pthread_mutex_lock(&(error_data->sumlock[1]));
+	error_data->sum[1] += yv[1]*yv[1]+(*(l));
+	///pthread_mutex_unlock(&(error_data->sumlock[1]));
 
-	pthread_mutex_lock(&(error_data->sumlock[1]));
-	error_data->sum[1] += p*p+l;
-	pthread_mutex_unlock(&(error_data->sumlock[1]));
-
-	pthread_mutex_lock(&(error_data->prodlock[1]));
-	error_data->prod[1] += p*l;
-	pthread_mutex_unlock(&(error_data->prodlock[1]));
+	//pthread_mutex_lock(&(error_data->prodlock[1]));
+	error_data->prod[1] += yv[1]*(*l);
+	//pthread_mutex_unlock(&(error_data->prodlock[1]));
 
 
       }
+      j=0;
     }
     
   dice_sync:
-    pthread_barrier_wait(&(error_data->sync));
-    f32 dL_dp[2];
+    //pthread_barrier_wait(&(error_data->sync_sum));
+
     
     j=start[1];
-    
+    f32 dL_dp[2];
+    j=start[1];
     for (i=start[0];i<dims[0];i++) {
       for (;j<dims[1];j++) {
 	if (i==stop[0] && j==stop[1]) goto grad_finish;
+	if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
 	tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
 	yv[0] = error_data->prob[COORD2(i,j,dims[0],dims[1],2)];
 	yv[1] = error_data->prob[COORD2(i,j,dims[0],dims[1],2)+1];
 
 	/* Calculate partials w.r.t. p */
 	l = (i32*)PyArray_GETPTR3(Y,i,j,0);
-	
+	if (yv[0]) {L=0.0;}
+	if (yv[1]) {L=0.0;}
 	dL_dp[0] = (-2 * (*l) * error_data->sum[0] + 4 * yv[0] * error_data->prod[0]) / (error_data->sum[0] * error_data->sum[0]);
 
 	l = (i32*)PyArray_GETPTR3(Y,i,j,1);
@@ -422,9 +481,9 @@ static void* _calculate_gradient(gradient_t *args) {
 	/* Calculate partials w.r.t. V */
 	// change for class 0
 	//TODO: this may need to be negated
-	change[0] = dL_dp[0] * (yv[0] - yv[0]*yv[0]) + dL_dp[1] * (-yv[0]*yv[1]);
-	change[1] = dL_dp[1] * (yv[1] - yv[1]*yv[1]) + dL_dp[0] * (-yv[1]*yv[0]);
-
+	change[0] = alpha * (dL_dp[0] * (yv[0] - yv[0]*yv[0]) + dL_dp[1] * (-yv[0]*yv[1]));
+	change[1] = alpha * (dL_dp[1] * (yv[1] - yv[1]*yv[1]) + dL_dp[0] * (-yv[1]*yv[0]));
+	  
 	//TODO: this isn't thread safe	
 	unary_change[0] += change[0] * tmp[0];
 	unary_change[1] += change[0] * tmp[1];
@@ -444,8 +503,8 @@ static void* _calculate_gradient(gradient_t *args) {
 	  if (i+ainc[n+n_factors] < 0 || i+ainc[n+n_factors]>=dims[0] || j+binc[n+n_factors] < 0 || j+binc[n+n_factors] >= dims[1]) continue;
 
 	  l=&EY[COORD2(i+ainc[n+n_factors],j+binc[n+n_factors],dims[0],dims[1],1)];
-	  V_change[n_factors*4 +n*4 + 2*((*l)&1)] += change[0]; //uninitalized
-	  V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1]; //uninitliazed
+	  V_change[n_factors*4 +n*4 + 2*((*l)&1)] += change[0]; 
+	  V_change[n_factors*4 +n*4 + 2*((*l)&1) + 1] += change[1]; 
 	}
       }
       j=0;

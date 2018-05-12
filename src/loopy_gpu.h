@@ -1,7 +1,6 @@
 #ifndef LOOPY_GPU_H
 #define LOOPY_GPU_H
-#include "loopy.h"
-
+#include "gridtypes.h"
 
 typedef struct{
   f32  *V_F, *F_V, *mu, *RE, *CE, *unary_c;

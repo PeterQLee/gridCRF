@@ -1,7 +1,7 @@
 #ifndef GRIDCRF_H
 #define GRIDCRF_H
 #define LBFGS_FLOAT 32
-
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <Python.h>
 #include <structmember.h>
 #include <numpy/arrayobject.h>
@@ -61,7 +61,7 @@ static PyTypeObject gridCRF_Type = {
   0,                         /* tp_setattro */
   0,                         /* tp_as_buffer */
   Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE,        /* tp_flags */
-  "grid CRF object",           /* tp_doc */
+  "grid CRF object\n Usage should include calling fit and predict",           /* tp_doc */
   0,                         /* tp_traverse */
   0,                         /* tp_clear */
   0,                         /* tp_richcompare */
@@ -84,7 +84,7 @@ static PyTypeObject gridCRF_Type = {
 static PyModuleDef gridCRFmodule = {
   PyModuleDef_HEAD_INIT,
   "gridCRF",
-  "TBH",
+  "grid baed conditional random field",
   -1,
   NULL, NULL, NULL, NULL, NULL
 };
