@@ -1,6 +1,9 @@
 CC=/usr/local/cuda/bin/nvcc
 #--prec-div=true
-all: build/gpu/loopy_gpu.o build/gpu/train_gpu.o build/gpu/gpu_link.o 
+all: directories build/gpu/loopy_gpu.o build/gpu/train_gpu.o build/gpu/gpu_link.o
+directories: build/gpu
+	mkdir -p build/gpu
+
 build/gpu/loopy_gpu.o: src/loopy_gpu.cu 
 	$(CC) -g -I /usr/include/python3.5  --compiler-options '-fPIC -mavx -mavx2' --device-c src/loopy_gpu.cu  -o build/gpu/loopy_gpu.o
 

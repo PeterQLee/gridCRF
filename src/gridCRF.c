@@ -31,6 +31,10 @@ static void gridCRF_dealloc(gridCRF_t *self) {
   //  Py_DECREF(self->V);
 
   //TODO: free rom and com
+  Py_DECREF(self->V);
+  Py_DECREF(self->unary_pyarr);
+  _mm_free(self->V_data);
+  free(self->unary);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -198,6 +202,8 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   printf("Done train");
   free(ainc);
   free(binc);
+  _mm_free(V_change);
+  
   
 }
 
@@ -286,15 +292,14 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   lpar.EY=PyArray_DATA(out);
 
   if (self->gpuflag) {
-    //loopyGPU(self,test,&lpar,refimg);
     predict_loopyGPU(self,test,&lpar, refimg);
   }
   else{
     loopyCPU(self,test,&lpar,refimg);
-    //_loopyCPU(self,test,&lpar,refimg);
   }
   
-  //return Py_BuildValue("");
+
+  _mm_free(lpar.mu);//TODO: change this to be allocated in function
   return out;
 }
 
