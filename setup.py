@@ -15,6 +15,6 @@ setup_kwargs={
 os.system('make')
 setup(name="BoardPy", version="1.0",
       include_dirs= [np.get_include(),'src/'],
-      ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c", "src/loopy.c"],**setup_kwargs)
+      ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c", "src/loopy.c", "src/train_cpu.c"],**setup_kwargs)
 ])
 
