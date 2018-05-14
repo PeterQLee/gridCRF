@@ -27,6 +27,41 @@ Proecedure is the following:
 4. For each epoch; calculate the change based on cross entropy
 5. In each epoch, update the parameters.
  */
+
+void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change) {
+  f32 *v = rmsp->v_node->next->data;
+  f32 *v_old = rmsp->v_node->data;
+  __m256 r1, gamma_256, invgamma_256, change, r4, lr_256;
+
+  gamma_256 = _mm256_set_ps(rmsp->gamma);
+  invgamma_256 = _mm256_load_ps(1.0);
+  invgamma_256 = _mm256_sub_ps(invgamma_256,gamma_256);
+  lr_256 = _mm256_load_ps(rmsp->lr
+  for (i=0;i<upper;i+=8) { 
+    r1 = _mm256_load_ps(&v_old[i]);
+    r1 = _mm256_mult_ps(r1,gamma_256);
+
+    change = _mm256_load_ps(&V_change[i]);
+    r4 = _mm256_mult_ps(change,change);
+    r4 = _mm256_mult_ps(invgamma_256,r4);
+    
+    r1 = _mm256_add_ps(r1,r4); // this is the new v
+    _mm256_store_ps(&v[i], r1);
+    
+    //Now do the update step
+    
+    r1 = _mm256_rsqrt_ps(r1);
+    r1 = _mm256_mult_ps(lr_256, r1);
+    r1 = _mm256_mult_ps(r1, change);
+    r4 = _mm256_load_ps(&V[i]);
+    r4 = _mm256_sub_ps(r4, r1);
+
+    // write to memory
+    _mm256_store_ps(&V[i], r4);
+  }
+  
+}
+
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   /*TODO: 
     Find out if we can avoid doing multiple loopy BPs by reusing the energies from the last iteration
