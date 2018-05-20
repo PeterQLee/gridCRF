@@ -28,16 +28,23 @@ Proecedure is the following:
 5. In each epoch, update the parameters.
  */
 
+
+typedef struct {
+  f32 gamma, lr, *vstore;
+  i32 current_offset;
+}rmsprop_t;
+
 void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change) {
-  f32 *v = rmsp->v_node->next->data;
-  f32 *v_old = rmsp->v_node->data;
+  f32 *v = &(rmsp->vstore[rmsp->current_offset*(n_factors*4*2+n_unary)]);
+  f32 *v_old = &(rmsp->vstore[(rmsp->current_offset^1)*(n_factors*4*2+n_unary)]);
   __m256 r1, gamma_256, invgamma_256, change, r4, lr_256;
 
   gamma_256 = _mm256_set_ps(rmsp->gamma);
   invgamma_256 = _mm256_load_ps(1.0);
   invgamma_256 = _mm256_sub_ps(invgamma_256,gamma_256);
-  lr_256 = _mm256_load_ps(rmsp->lr
-  for (i=0;i<upper;i+=8) { 
+  lr_256 = _mm256_load_ps(rmsp->lr);
+  for (i=0;i<upper;i+=8) {
+    /* calculate change */
     r1 = _mm256_load_ps(&v_old[i]);
     r1 = _mm256_mult_ps(r1,gamma_256);
 
@@ -46,10 +53,9 @@ void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change) {
     r4 = _mm256_mult_ps(invgamma_256,r4);
     
     r1 = _mm256_add_ps(r1,r4); // this is the new v
-    _mm256_store_ps(&v[i], r1);
+    _mm256_store_ps(&v[i], r1); //make this the v change for the next run.
     
     //Now do the update step
-    
     r1 = _mm256_rsqrt_ps(r1);
     r1 = _mm256_mult_ps(lr_256, r1);
     r1 = _mm256_mult_ps(r1, change);
@@ -59,7 +65,7 @@ void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change) {
     // write to memory
     _mm256_store_ps(&V[i], r4);
   }
-  
+  rmsp->current_offset++;
 }
 
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
@@ -113,6 +119,8 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
     V_change_l[h] = _mm_malloc(sizeof(f32)*(n_factors*4*2+N_UNARY),32);
   }
 
+  /* Process error function data */
+  
   srand(0);
   i32 *inds = indlist(n_samples);
   void **error_data = malloc(sizeof(void*)*n_samples);
@@ -146,12 +154,35 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       error_data[j] = (void*) dice_error_tmp;
     }
     
-    
     break;
   case ENTROPY:
     break;
-    
   }
+
+  /* 
+     Update method data
+   */
+  void *update_data;
+  switch(args->update_type) {
+  case RMSPROP:
+
+      update_data = malloc(sizeof(rmsprop_t));
+      rmsprop_t *rmstmp = (rmsprop_t*) update_data;
+      rmstmp->vstore = (f32*) _mm_alloc(sizeof(f32)*2*(n_factors*4*2+n_unary));
+      rmstmp->gamma = 0.999;
+      rmstmp->lr = args->lr;
+      rmstmp->current_offset = 0;
+      for (i=0;i<2*(n_factors*4*2+n_unary);i++) {
+	rmstmp->vstore[i]=0.0f;
+      }
+
+  break;
+  case SGD:
+    update_data = NULL;
+   
+  break;
+  }
+
   
   for (i=0;i<epochs;i++) {
     shuffle_inds(inds, n_samples);
@@ -209,6 +240,23 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       totL=0.0f;
       /* update params */
       f32 lr = 1.0/(dims[0]*dims[1]);
+      switch(args->update_type){
+      case RMSPROP:
+	//summate gradients
+	for (h=1;h<n_threads;h++) {
+	  for (k=0;k<n_factors*4*2;k++){
+	    targs[0].V_change[k]+=lr*targs[h].V_change[k];
+	  }
+	  targs[0].V_change[n_factors*4*2]+=lr*targs[h].V_change[n_factors*4*2];
+	  targs[0].V_change[n_factors*4*2+1]+=lr*targs[h].V_change[n_factors*4*2+1];
+	  targs[0].V_change[n_factors*4*2+2]+=lr*targs[h].V_change[n_factors*4*2+2];
+	  targs[0].V_change[n_factors*4*2+3]+=lr*targs[h].V_change[n_factors*4*2+3];
+	}
+
+	RMSprop_update((rmsprop_t*) update_data, V, targs[0].V_change);
+	break;
+      case SGD:
+	//defaults to gradient descent
 #if L2
       for (h=0;h<n_threads;h++) {
 	for (k=0;k<n_factors*4*2;k++){
@@ -232,8 +280,9 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	totL+=targs[h].L/n_threads;
       }
 #endif
+      }
       printf("TOTL %f\n",totL);
-
+    
 
     }
   }
@@ -251,7 +300,16 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   case ENTROPY:
     break;
   }
-    
+
+  switch(args->update_type) {
+  case RMSPROP:
+    _mm_free(((rmsprop_t*)update_data)->vstore);
+    free(update_data);
+    break;
+  case SGD:
+    break;
+  }
+  
   for (j=0;j<n_samples;j++) {
     _mm_free(mu_l[j]);
     _mm_free(EY_l[j]);
