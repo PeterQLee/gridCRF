@@ -3,7 +3,7 @@ from distutils.core import setup, Extension
 import numpy as np
 import os
 
-mode = 'cpuonly'
+mode = 'gpu'
 if mode == 'gpu':
     setup_kwargs={
         'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],

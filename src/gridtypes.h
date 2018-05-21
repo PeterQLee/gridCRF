@@ -67,6 +67,7 @@ typedef struct{
 typedef struct{
   i32 epochs;
   f32 alpha;
+  f32 gamma;
   f32 stop_tol;
   i32 error_func; //0 = entropy, 1 = dice
   i32 update_type;

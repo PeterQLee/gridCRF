@@ -34,7 +34,7 @@ static void gridCRF_dealloc(gridCRF_t *self) {
   Py_DECREF(self->V);
   Py_DECREF(self->unary_pyarr);
   _mm_free(self->V_data);
-  free(self->unary);
+  //free(self->unary);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
 
@@ -60,9 +60,9 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   }
   self->n_factors= n_factors;
   self->n_unary = 4;
-  self->V_data = _mm_malloc((n_factors*2*4) * sizeof(f32),32); //TODO: use aligned malloc
+  self->V_data = _mm_malloc((n_factors*2*4 + self->n_unary) * sizeof(f32),64); //TODO: use aligned malloc
 
-  self->unary = malloc(sizeof(f32)*4);
+  self->unary = &(self->V_data[n_factors*2*4]);
   self->unary[0]=0.0f;
   self->unary[1]=0.0f;
   self->unary[2]=0.0f;
@@ -115,6 +115,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   
   f32 L=0.0;
   f32 alpha=tpt->alpha;
+  f32 gamma = tpt->gamma;
 
   __m256 r1,r2;
   
@@ -181,6 +182,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   gradargs.n_factors=n_factors;
   gradargs.n_unary = n_unary;
   gradargs.alpha=alpha;
+  gradargs.gamma = gamma;
   gradargs.stop_tol = tpt->stop_tol;
   gradargs.error_func = tpt->error_func;
   gradargs.update_type = tpt->update_type;
@@ -222,14 +224,15 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   train_params_t tpt;
   tpt.epochs=100;
   tpt.alpha=0.001f;
+  tpt.gamma=0.95f;
   tpt.stop_tol =0.001f;
   tpt.error_func = 0;
   tpt.update_type = 0;
-  static char * kwlist[] = {"train","lab","epochs","alpha", "stop_tol", "error_type", "update_type",NULL};
+  static char * kwlist[] = {"train","lab","epochs","alpha","gamma", "stop_tol", "error_type", "update_type",NULL};
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|iffii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha),&(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type) )) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifffii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.gamma), &(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type) )) return NULL;
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) {
     PyErr_SetString(PyExc_ValueError, "train must be a list");

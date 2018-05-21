@@ -63,6 +63,8 @@ static const char fit_docstr[] =\
   "    The learning rate used train the model. Until a more advanced training algorithm is used, the \n"\
   "    optimal alpha for use will vary depending on the error function. Experimentally, cross entropy\n"\
   "    works well with 0.1, and dice error works well between 100.0 and 1000.0\n\n" \
+  "- gamma =0.95: float\n"\
+  "    Gamma factor for RMSprop. Ignored otherwise\n\n"\
   "- stop_tol = 0.001: float\n"\
   "    The minimum change necessary to all parameters to continue training.\n\n"
   "- error_type = 0: int\n"\

@@ -31,8 +31,9 @@ Proecedure is the following:
 
 
 static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
-  f32 *v = &(rmsp->vstore[rmsp->current_offset*(n_factors*4*2+n_unary)]);
-  f32 *v_old = &(rmsp->vstore[(rmsp->current_offset^1)*(n_factors*4*2+n_unary)]);
+  //TODO: make it so vstore is unique for each example
+  f32 *v = rmsp->vstore[rmsp->current_offset];
+  f32 *v_old = rmsp->vstore[(rmsp->current_offset^1)];
   __m256 r1, gamma_256, invgamma_256, change, r4, alpha_256;
   i32 upper = n_factors*4*2+n_unary, i,j;
 
@@ -70,9 +71,9 @@ static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors
     _mm256_store_ps(&V[i], r4);
     assert(!isnan(V[i]));
   }
-  for (i=upper/8+i%8;i<upper;i++) {
+  for (i=8*(upper/8);i<upper;i++) {
     v[i] = v_old[i]*rmsp->gamma + (1.0-rmsp->gamma)*V_change[i]*V_change[i];
-    V[i] -= (rmsp->alpha)/sqrt(v[i])*V_change[i];
+    V[i] += (rmsp->alpha)/sqrt(v[i])*V_change[i];
     if (fabs((rmsp->alpha)/sqrt(v[i])*V_change[i]) > rmsp->stop_tol){
       *(rmsp->converged) = 0;
     }
@@ -145,11 +146,14 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
     sum = &prod[2];
     pthread_mutex_t *sumlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
     pthread_mutex_t *prodlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
-    //#ifndef __DARWIN__
-    //pthread_barrier_t sync_sum;
-    //pthread_barrier_init(&sync_sum,NULL,1);
+    #ifndef __APPLE__
+    pthread_barrier_t sync_sum;
+    pthread_barrier_init(&sync_sum,NULL,1);
+
+    #else
     i32 sync_sum; //TODO: fix this
-   
+    #endif
+    
     for (h=0;h<n_threads;h++) {
       pthread_mutex_init(&sumlocks[h], NULL);
       pthread_mutex_init(&prodlocks[h], NULL);
@@ -185,14 +189,18 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
       update_data = malloc(sizeof(rmsprop_t));
       rmsprop_t *rmstmp = (rmsprop_t*) update_data;
-      rmstmp->vstore = (f32*) _mm_malloc(sizeof(f32)*2*(n_factors*4*2+args->n_unary),32);
-      rmstmp->gamma = 0.999f;
+      //rmstmp->vstore = (f32*) _mm_malloc(sizeof(f32)*2*(n_factors*4*2+args->n_unary),32);
+      rmstmp->vstore = (f32**) malloc(sizeof(f32*)*2);
+      rmstmp->vstore[0] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),32);
+      rmstmp->vstore[1] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),32); 
+      rmstmp->gamma = args->gamma;
       rmstmp->alpha = args->alpha;
       rmstmp->current_offset = 0;
       rmstmp->stop_tol = args->stop_tol;
       rmstmp->converged = &converged;
-      for (i=0;i<2*(n_factors*4*2+args->n_unary);i++) {
-	rmstmp->vstore[i]=0.01f;
+      for (i=0;i<(n_factors*4*2+args->n_unary);i++) {
+	rmstmp->vstore[0][i]=0.01f;
+	rmstmp->vstore[1][i]=0.01f;
       }
 
   break;
@@ -344,7 +352,9 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
   switch(args->update_type) {
   case RMSPROP:
-    _mm_free(((rmsprop_t*)update_data)->vstore);
+    _mm_free(((rmsprop_t*)update_data)->vstore[0]);
+    _mm_free(((rmsprop_t*)update_data)->vstore[1]);
+    free(((rmsprop_t*)update_data)->vstore);
     free(update_data);
     break;
   case SGD:
@@ -627,6 +637,8 @@ static void* _calculate_gradient(gradient_t *args) {
 
 	dL_dp[1] = (-2 * (*l) * error_data->sum[1] + 4 * yv[1] * error_data->prod[1]) / (error_data->sum[1] * error_data->sum[1]);
 
+	
+	L += (error_data->prod[0]/error_data->sum[0]) + (error_data->prod[1]/error_data->sum[1]);
 
 	/* Calculate partials w.r.t. V */
 	// change for class 0

@@ -40,6 +40,7 @@ typedef struct {
   npy_intp * stop;
   i32 num_params, n_factors, n_unary;
   f32 alpha;
+  f32 gamma;
   f32 scale;
   PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
   loopy_params_t *lpar;
@@ -52,7 +53,7 @@ typedef struct {
 }gradient_t;
 
 typedef struct {
-  f32 gamma, alpha, *vstore, stop_tol;
+  f32 gamma, alpha, **vstore, stop_tol;
   i32 current_offset, *converged;
 }rmsprop_t;
 
