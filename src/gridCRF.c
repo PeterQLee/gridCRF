@@ -59,7 +59,9 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
     n_factors= n_factors + i*4;
   }
   self->n_factors= n_factors;
+  self->n_unary = 4;
   self->V_data = _mm_malloc((n_factors*2*4) * sizeof(f32),32); //TODO: use aligned malloc
+
   self->unary = malloc(sizeof(f32)*4);
   self->unary[0]=0.0f;
   self->unary[1]=0.0f;
@@ -94,6 +96,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   i32 its, epochs=tpt->epochs;//epochs=1000;
   i32 *l;
   i64 n_factors=self->n_factors;
+  i64 n_unary = self->n_unary;
   f32 *V = self->V_data;
 
   f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+NUM_UNARY),32);
@@ -176,8 +179,11 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   gradargs.dims=NULL;
   gradargs.num_params=num_params;
   gradargs.n_factors=n_factors;
+  gradargs.n_unary = n_unary;
   gradargs.alpha=alpha;
+  gradargs.stop_tol = tpt->stop_tol;
   gradargs.error_func = tpt->error_func;
+  gradargs.update_type = tpt->update_type;
   //gradargs.loopy_func=&_loopyCPU;
 
   if (self->gpuflag) {
@@ -216,12 +222,14 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   train_params_t tpt;
   tpt.epochs=100;
   tpt.alpha=0.001f;
+  tpt.stop_tol =0.001f;
   tpt.error_func = 0;
-  static char * kwlist[] = {"train","lab","epochs","alpha", "error_type",NULL};
+  tpt.update_type = 0;
+  static char * kwlist[] = {"train","lab","epochs","alpha", "stop_tol", "error_type", "update_type",NULL};
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifi",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.error_func) )) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|iffii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha),&(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type) )) return NULL;
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) {
     PyErr_SetString(PyExc_ValueError, "train must be a list");

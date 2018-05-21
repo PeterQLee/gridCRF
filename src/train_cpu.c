@@ -29,43 +29,55 @@ Proecedure is the following:
  */
 
 
-typedef struct {
-  f32 gamma, lr, *vstore;
-  i32 current_offset;
-}rmsprop_t;
 
-void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change) {
+static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
   f32 *v = &(rmsp->vstore[rmsp->current_offset*(n_factors*4*2+n_unary)]);
   f32 *v_old = &(rmsp->vstore[(rmsp->current_offset^1)*(n_factors*4*2+n_unary)]);
-  __m256 r1, gamma_256, invgamma_256, change, r4, lr_256;
+  __m256 r1, gamma_256, invgamma_256, change, r4, alpha_256;
+  i32 upper = n_factors*4*2+n_unary, i,j;
 
-  gamma_256 = _mm256_set_ps(rmsp->gamma);
-  invgamma_256 = _mm256_load_ps(1.0);
+  gamma_256 = _mm256_set1_ps(rmsp->gamma);
+  invgamma_256 = _mm256_set1_ps(1.0f);
   invgamma_256 = _mm256_sub_ps(invgamma_256,gamma_256);
-  lr_256 = _mm256_load_ps(rmsp->lr);
-  for (i=0;i<upper;i+=8) {
+  alpha_256 = _mm256_set1_ps(rmsp->alpha);
+  for (i=0;i<8*(upper/8);i+=8) {
     /* calculate change */
     r1 = _mm256_load_ps(&v_old[i]);
-    r1 = _mm256_mult_ps(r1,gamma_256);
+    r1 = _mm256_mul_ps(r1,gamma_256);
 
     change = _mm256_load_ps(&V_change[i]);
-    r4 = _mm256_mult_ps(change,change);
-    r4 = _mm256_mult_ps(invgamma_256,r4);
+    r4 = _mm256_mul_ps(change,change);
+    r4 = _mm256_mul_ps(invgamma_256,r4);
     
     r1 = _mm256_add_ps(r1,r4); // this is the new v
     _mm256_store_ps(&v[i], r1); //make this the v change for the next run.
-    
+
     //Now do the update step
-    r1 = _mm256_rsqrt_ps(r1);
-    r1 = _mm256_mult_ps(lr_256, r1);
-    r1 = _mm256_mult_ps(r1, change);
+    r1 = _mm256_rsqrt_ps(r1); //Issue here is probably from r1 being 0.
+    r1 = _mm256_mul_ps(alpha_256, r1);
+    r1 = _mm256_mul_ps(r1, change);
     r4 = _mm256_load_ps(&V[i]);
-    r4 = _mm256_sub_ps(r4, r1);
+    r4 = _mm256_add_ps(r4, r1);
+
+    // TODO: find a way to vectorize this
+    for (j=0;j<8;j++) {
+      if (fabs(r1[i]) > rmsp->stop_tol){
+	*(rmsp->converged) = 0;
+      }
+    }
 
     // write to memory
     _mm256_store_ps(&V[i], r4);
+    assert(!isnan(V[i]));
   }
-  rmsp->current_offset++;
+  for (i=upper/8+i%8;i<upper;i++) {
+    v[i] = v_old[i]*rmsp->gamma + (1.0-rmsp->gamma)*V_change[i]*V_change[i];
+    V[i] -= (rmsp->alpha)/sqrt(v[i])*V_change[i];
+    if (fabs((rmsp->alpha)/sqrt(v[i])*V_change[i]) > rmsp->stop_tol){
+      *(rmsp->converged) = 0;
+    }
+  }
+  rmsp->current_offset= (rmsp->current_offset ^ 1);
 }
 
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
@@ -123,7 +135,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   
   srand(0);
   i32 *inds = indlist(n_samples);
-  void **error_data = malloc(sizeof(void*)*n_samples);
+  void **error_data = (void**) malloc(sizeof(void*)*n_samples);
   f32 *prod, *sum, *tmpprob;
   cpu_dice_data_t *dice_error_tmp;
   
@@ -133,8 +145,11 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
     sum = &prod[2];
     pthread_mutex_t *sumlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
     pthread_mutex_t *prodlocks = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t)*n_threads);
-    pthread_barrier_t sync_sum;
-    pthread_barrier_init(&sync_sum,NULL,1);
+    //#ifndef __DARWIN__
+    //pthread_barrier_t sync_sum;
+    //pthread_barrier_init(&sync_sum,NULL,1);
+    i32 sync_sum; //TODO: fix this
+   
     for (h=0;h<n_threads;h++) {
       pthread_mutex_init(&sumlocks[h], NULL);
       pthread_mutex_init(&prodlocks[h], NULL);
@@ -158,22 +173,26 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   case ENTROPY:
     break;
   }
-
+  f32 lr, scale, stop_tol = args->stop_tol;
   /* 
      Update method data
    */
   void *update_data;
+  i32 converged = 0;
+  i32 n_unary = 4;
   switch(args->update_type) {
   case RMSPROP:
 
       update_data = malloc(sizeof(rmsprop_t));
       rmsprop_t *rmstmp = (rmsprop_t*) update_data;
-      rmstmp->vstore = (f32*) _mm_alloc(sizeof(f32)*2*(n_factors*4*2+n_unary));
-      rmstmp->gamma = 0.999;
-      rmstmp->lr = args->lr;
+      rmstmp->vstore = (f32*) _mm_malloc(sizeof(f32)*2*(n_factors*4*2+args->n_unary),32);
+      rmstmp->gamma = 0.999f;
+      rmstmp->alpha = args->alpha;
       rmstmp->current_offset = 0;
-      for (i=0;i<2*(n_factors*4*2+n_unary);i++) {
-	rmstmp->vstore[i]=0.0f;
+      rmstmp->stop_tol = args->stop_tol;
+      rmstmp->converged = &converged;
+      for (i=0;i<2*(n_factors*4*2+args->n_unary);i++) {
+	rmstmp->vstore[i]=0.01f;
       }
 
   break;
@@ -183,11 +202,13 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   break;
   }
 
-  
-  for (i=0;i<epochs;i++) {
+
+  for (i=0;i<epochs && !converged;i++) {
+    converged = 1;
     shuffle_inds(inds, n_samples);
     for (j=0;j<n_samples;j++){
       dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,inds[j]));
+      scale = 1.0/(dims[0]*dims[1]);
       args->dims=dims;
       s0=0;
       // get threads ready
@@ -208,6 +229,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	targs[h].lpar->mu=mu_l[inds[j]];
 	targs[h].lpar->EY=EY_l[inds[j]];
 	targs[h].error_data = error_data[inds[j]];
+	targs[h].scale = scale;
 	
       }
       switch (args->error_func) {
@@ -226,7 +248,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       args->lpar->mu=mu_l[inds[j]];//redundant
       args->lpar->EY=EY_l[inds[j]];
 
-	
+      
       // Do a loop iteration to get estimated outcomes with this parameterization
       (*args->loopy_func)(args->self, (PyArrayObject *) (PyArrayObject*)PyList_GetItem(X_list,inds[j]), args->lpar, NULL);
       
@@ -239,7 +261,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       
       totL=0.0f;
       /* update params */
-      f32 lr = 1.0/(dims[0]*dims[1]);
+      lr = args->alpha;
       switch(args->update_type){
       case RMSPROP:
 	//summate gradients
@@ -247,13 +269,14 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	  for (k=0;k<n_factors*4*2;k++){
 	    targs[0].V_change[k]+=lr*targs[h].V_change[k];
 	  }
-	  targs[0].V_change[n_factors*4*2]+=lr*targs[h].V_change[n_factors*4*2];
-	  targs[0].V_change[n_factors*4*2+1]+=lr*targs[h].V_change[n_factors*4*2+1];
-	  targs[0].V_change[n_factors*4*2+2]+=lr*targs[h].V_change[n_factors*4*2+2];
-	  targs[0].V_change[n_factors*4*2+3]+=lr*targs[h].V_change[n_factors*4*2+3];
+	  targs[0].V_change[n_factors*4*2]+=targs[h].V_change[n_factors*4*2];
+	  targs[0].V_change[n_factors*4*2+1]+=targs[h].V_change[n_factors*4*2+1];
+	  targs[0].V_change[n_factors*4*2+2]+=targs[h].V_change[n_factors*4*2+2];
+	  targs[0].V_change[n_factors*4*2+3]+=targs[h].V_change[n_factors*4*2+3];
+	  totL+=targs[h].L/n_threads;
 	}
-
-	RMSprop_update((rmsprop_t*) update_data, V, targs[0].V_change);
+	
+	RMSprop_update((rmsprop_t*) update_data, V, targs[0].V_change, n_factors, n_unary);
 	break;
       case SGD:
 	//defaults to gradient descent
@@ -272,19 +295,37 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       for (h=0;h<n_threads;h++) {
 	for (k=0;k<n_factors*4*2;k++){
 	  V[k]+=lr*targs[h].V_change[k];
+	  if (fabs(lr*targs[h].V_change[k])>stop_tol){
+	    converged = 0;
+	  }
 	}
 	unary[0]+=lr*targs[h].V_change[n_factors*4*2];
 	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1];
 	unary[2]+=lr*targs[h].V_change[n_factors*4*2+2];
 	unary[3]+=lr*targs[h].V_change[n_factors*4*2+3];
+	if (fabs(lr*targs[h].V_change[k])>stop_tol){
+	  converged = 0;
+	}
+	if (fabs(lr*targs[h].V_change[k+1])>stop_tol){
+	  converged = 0;
+	}
+	if (fabs(lr*targs[h].V_change[k+2])>stop_tol){
+	  converged = 0;
+	}
+	if (fabs(lr*targs[h].V_change[k+3])>stop_tol){
+	  converged = 0;
+	}
+	
 	totL+=targs[h].L/n_threads;
       }
 #endif
       }
-      printf("TOTL %f\n",totL);
+      printf("TOTL %f, epoch = %d\n",totL,i);
     
 
     }
+    //TODO: check tolerances on each  data.
+    // also change rmsprop to save gradients for each data sample
   }
   switch(args->error_func) {
   case DICE:
@@ -354,7 +395,7 @@ static void* _calculate_gradient(gradient_t *args) {
 
   i32 n=0;
   f32 *tmp;
-  f32 alpha=args->alpha;
+  f32 scale=args->scale;
   printf("dims %ld %ld\n",dims[0],dims[1]);
   
   //PyArrayObject *EY = args->EY;
@@ -422,9 +463,9 @@ static void* _calculate_gradient(gradient_t *args) {
 	if (*l && yv[0]==0.0f) {
 	  L+=100;
 	}
-	change[0] = -alpha * (((*l)&1)-yv[0]) ;
-	unary_change[0] += -alpha*(((*l)&1)-yv[0])*tmp[0];
-	unary_change[1] += -alpha*(((*l)&1)-yv[0])*tmp[1];
+	change[0] = -scale * (((*l)&1)-yv[0]) ;
+	unary_change[0] += -scale*(((*l)&1)-yv[0])*tmp[0];
+	unary_change[1] += -scale*(((*l)&1)-yv[0])*tmp[1];
 
 	
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
@@ -442,10 +483,10 @@ static void* _calculate_gradient(gradient_t *args) {
 	}
 
 	//printf("yv %f %f\n",yv[0],yv[1]);
-	change[1] = -alpha * (((*l)&1)-yv[1]);
+	change[1] = -scale * (((*l)&1)-yv[1]);
 
-	unary_change[2] += -alpha*(((*l)&1)-yv[1])*tmp[0];
-	unary_change[3] += -alpha*(((*l)&1)-yv[1])*tmp[1];
+	unary_change[2] += -scale*(((*l)&1)-yv[1])*tmp[0];
+	unary_change[3] += -scale*(((*l)&1)-yv[1])*tmp[1];
 	//printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
       
 	if (isinf(L)){
@@ -590,8 +631,8 @@ static void* _calculate_gradient(gradient_t *args) {
 	/* Calculate partials w.r.t. V */
 	// change for class 0
 	//TODO: this may need to be negated
-	change[0] = alpha * (dL_dp[0] * (yv[0] - yv[0]*yv[0]) + dL_dp[1] * (-yv[0]*yv[1]));
-	change[1] = alpha * (dL_dp[1] * (yv[1] - yv[1]*yv[1]) + dL_dp[0] * (-yv[1]*yv[0]));
+	change[0] = scale * (dL_dp[0] * (yv[0] - yv[0]*yv[0]) + dL_dp[1] * (-yv[0]*yv[1]));
+	change[1] = scale * (dL_dp[1] * (yv[1] - yv[1]*yv[1]) + dL_dp[0] * (-yv[1]*yv[0]));
 	  
 	//TODO: this isn't thread safe	
 	unary_change[0] += change[0] * tmp[0];

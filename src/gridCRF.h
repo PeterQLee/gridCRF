@@ -62,11 +62,17 @@ static const char fit_docstr[] =\
   "- alpha = 0.001: float\n"\
   "    The learning rate used train the model. Until a more advanced training algorithm is used, the \n"\
   "    optimal alpha for use will vary depending on the error function. Experimentally, cross entropy\n"\
-  "    works well with 0.1, and dice error works well between 100.0 and 1000.0\n\n"\
+  "    works well with 0.1, and dice error works well between 100.0 and 1000.0\n\n" \
+  "- stop_tol = 0.001: float\n"\
+  "    The minimum change necessary to all parameters to continue training.\n\n"
   "- error_type = 0: int\n"\
   "    The error type used for training. Options currently include:\n"\
   "    0 = cross entropy\n"\
-  "    1 = dice error\n\n";
+  "    1 = dice error\n\n"\
+  "- update_type = 0: int\n"\
+  "    The method for updating parameters. Options currently include:\n"\
+  "    0 = Stochastic gradient descent.\n"\
+  "    1 = RMSprop\n\n";
 
 static const char predict_docstr[] =	\
   "Predicts given the trained model\n"

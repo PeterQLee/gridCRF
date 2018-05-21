@@ -42,7 +42,7 @@ typedef struct{
 typedef struct{
   PyObject_HEAD
   i64 n_outcomes;
-  i64 n_factors;
+  i64 n_factors, n_unary;
   i64 depth;
   PyArrayObject *V, *unary_pyarr;
   f32 *V_data;
@@ -67,13 +67,18 @@ typedef struct{
 typedef struct{
   i32 epochs;
   f32 alpha;
-  i32 gpu;
+  f32 stop_tol;
   i32 error_func; //0 = entropy, 1 = dice
+  i32 update_type;
 }train_params_t;
 
 typedef  enum {ENTROPY,
 	       DICE
 }error_func_e;
+
+typedef enum {SGD,
+	      RMSPROP
+}update_type_e;
 
 #endif
 

@@ -18,13 +18,15 @@ Copyright 2018 Peter Q. Lee
 #define TRAIN_CPU_H
 #include "gridtypes.h"
 #include <pthread.h>
+#include "immintrin.h"
 #include "common.h"
 #include "loopy.h"
 
 typedef struct {
   f32 *prod, *sum, *prob;
   pthread_mutex_t *sumlock, *prodlock;
-  pthread_barrier_t *sync_sum;
+  //pthread_barrier_t *sync_sum;
+  void *sync_sum;
 
 }cpu_dice_data_t;
 
@@ -36,16 +38,26 @@ typedef struct {
   npy_intp * dims;
   npy_intp * start;
   npy_intp * stop;
-  i32 num_params, n_factors;
+  i32 num_params, n_factors, n_unary;
   f32 alpha;
+  f32 scale;
   PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
   loopy_params_t *lpar;
   f32 L;
   i32 *instance_index;
   error_func_e error_func;
   void* error_data;
+  update_type_e update_type;
+  f32 stop_tol; // min change threshold to continue training
 }gradient_t;
 
+typedef struct {
+  f32 gamma, alpha, *vstore, stop_tol;
+  i32 current_offset, *converged;
+}rmsprop_t;
+
+
+static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary);
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads);
 static void* _calculate_gradient(gradient_t *args);
 
