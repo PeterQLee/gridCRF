@@ -29,6 +29,11 @@ Proecedure is the following:
  */
 
 
+static void RMSprop_swap_vstore(rmsprop_t *rmsp, i32 index, i32 n_params) {
+  /* modify DS to point to sample's past gradient*/
+  rmsp->vstore[0] = rmsp->vstore_agg[index*2];
+  rmsp->vstore[1] = rmsp->vstore_agg[index*2+1];
+}
 
 static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
   //TODO: make it so vstore is unique for each example
@@ -191,16 +196,20 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       rmsprop_t *rmstmp = (rmsprop_t*) update_data;
       //rmstmp->vstore = (f32*) _mm_malloc(sizeof(f32)*2*(n_factors*4*2+args->n_unary),32);
       rmstmp->vstore = (f32**) malloc(sizeof(f32*)*2);
-      rmstmp->vstore[0] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),32);
-      rmstmp->vstore[1] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),32); 
+      rmstmp->vstore_agg = (f32*) malloc(sizeof(f32*)*n_samples*2);
       rmstmp->gamma = args->gamma;
       rmstmp->alpha = args->alpha;
       rmstmp->current_offset = 0;
       rmstmp->stop_tol = args->stop_tol;
       rmstmp->converged = &converged;
-      for (i=0;i<(n_factors*4*2+args->n_unary);i++) {
-	rmstmp->vstore[0][i]=0.01f;
-	rmstmp->vstore[1][i]=0.01f;
+      for (i=0;i<n_samples;i++){
+	rmstmp->vstore_agg[i*2] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),64);
+	rmstmp->vstore_agg[i*2+1] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),64); 
+
+	for (j=0;j<(n_factors*4*2+args->n_unary);j++) {
+	  rmstmp->vstore_agg[i*2][j]=0.01f;
+	  rmstmp->vstore_agg[i*2+1][j]=0.01f;
+	}
       }
 
   break;
@@ -283,7 +292,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	  targs[0].V_change[n_factors*4*2+3]+=targs[h].V_change[n_factors*4*2+3];
 	  totL+=targs[h].L/n_threads;
 	}
-	
+	RMSprop_swap_vstore((rmsprop_t*) update_data, j, 4*2*n_factors+n_unary);
 	RMSprop_update((rmsprop_t*) update_data, V, targs[0].V_change, n_factors, n_unary);
 	break;
       case SGD:
@@ -352,8 +361,11 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
   switch(args->update_type) {
   case RMSPROP:
-    _mm_free(((rmsprop_t*)update_data)->vstore[0]);
-    _mm_free(((rmsprop_t*)update_data)->vstore[1]);
+    for (i=0;i<n_samples;i++){
+      _mm_free(((rmsprop_t*)update_data)->vstore_agg[i*2]);
+      _mm_free(((rmsprop_t*)update_data)->vstore_agg[i*2+1]);
+    }
+    free(((rmsprop_t*)update_data)->vstore_agg);
     free(((rmsprop_t*)update_data)->vstore);
     free(update_data);
     break;

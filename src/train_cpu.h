@@ -53,7 +53,7 @@ typedef struct {
 }gradient_t;
 
 typedef struct {
-  f32 gamma, alpha, **vstore, stop_tol;
+  f32 gamma, alpha, **vstore_agg, **vstore, stop_tol;
   i32 current_offset, *converged;
 }rmsprop_t;
 
