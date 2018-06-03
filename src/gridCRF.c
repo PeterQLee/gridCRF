@@ -50,7 +50,7 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   npy_int depth_=0;
   static char * kwlist []= {"depth", "n_unary", "gpuflag" ,NULL};
   
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &(self->gpuflag))) return 1;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &self->n_unary, &(self->gpuflag))) return 1;
   if (self->n_unary%4!=0) {
     PyErr_SetString(PyExc_ValueError, "Unary must be a multiple of 4");
     return 1;
@@ -286,7 +286,7 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
       PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
       return NULL;
     }
-    if (!PyArray_Check(X) || PyArray_NDIM(X) !=3 || PyArray_DIMS(X)[2]%2 !=0 || PyArray_DIMS(X)[2]%2!=self->n_unary/2) {
+    if (!PyArray_Check(X) || PyArray_NDIM(X) !=3 || PyArray_DIMS(X)[2]%2 !=0 || PyArray_DIMS(X)[2] != self->n_unary/2) {
       PyErr_SetString(PyExc_ValueError, "train must only contain 3 dimensional arrays, of twice the number of unarys when constructed");
       return NULL;
     }

@@ -318,7 +318,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	}
 	for (k=0;k<n_unary;k++){
 	  unary[k]+=lr*targs[h].V_change[n_factors*4*2 + k];
-	  if (fabs(lr*targs[h].V_change[k])>stop_tol){
+	  if (fabs(lr*targs[h].V_change[n_factors*4*2 + k])>stop_tol){
 	    converged = 0;
 	  }
 	}
@@ -437,7 +437,7 @@ static void* _calculate_gradient(gradient_t *args) {
   i32 n_factors = args->n_factors;
   i32 n_unary = args->n_unary;
   i32 n_params = n_factors * 8 + n_unary;
-  i32 n_chan = args->n_inp_channels;
+  i32 n_chan = args->self->n_inp_channels;
 
   /* Clear change var*/
   memset(V_change, 0, sizeof(f32)*n_params);

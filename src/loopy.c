@@ -393,7 +393,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
       f64 base= *((f64*)PyArray_GETPTR3(X,x,y,0));
       *((f64*)tmp) = base;
 
-      _compute_unary(tmp,base,unary,n_chan);
+      _compute_unary((f32*)tmp,(f32*)&base,unary,n_chan);
       //tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
       //tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
       r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi

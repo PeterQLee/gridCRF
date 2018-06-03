@@ -202,9 +202,10 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   
   /* error data allocation*/
   void ** error_data = (void**) malloc(sizeof(void*) * n_samples);
+  gpu_dice_error_data_t *gerror_data;
   switch(args->error_func) {
   case DICE:
-    gpu_dice_error_data_t *gerror_data = (gpu_dice_error_data_t*) malloc(sizeof(gpu_dice_error_data_t)*n_samples);
+     gerror_data = (gpu_dice_error_data_t*) malloc(sizeof(gpu_dice_error_data_t)*n_samples);
     f32 *sum, *prod;
     err = cudaMalloc(&prod,sizeof(f32)*4);
     assert(err==cudaSuccess);
