@@ -260,3 +260,5 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 * DONE Fix rmsp current offset in CPU to do it at the end of epoch.\
 
 * TODO Fix numpy owned 
+* TODO universalize linalg operations
+* TODO Fix discrepency with rmsprop, dice cpu due to unary change.

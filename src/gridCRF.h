@@ -36,6 +36,9 @@ static const char mainobj_docstr[] = \
   "Initialization parameters:\n"\
   "n: int\n"\
   "    The width of the grid for the CRF\n\n"\
+  "n_inp_channels: int\n"\
+  "    The number of input channels in the CRF.\n"
+  "    Must be divisible by two.\n\n"\
   "gpuflag=0: int\n"\
   "    Flag for enabling the gpu:\n"\
   "    0 = CPU mode\n"\

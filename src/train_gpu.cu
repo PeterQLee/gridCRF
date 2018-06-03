@@ -18,7 +18,6 @@ extern "C" {
 #include "train_gpu_cu.h"
 }
 
-#define N_UNARY 4
 //TODO: copy V_data, to allocated V_data
 extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   #define VERBOSE 0
@@ -34,6 +33,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   lpar.eval = args->lpar->eval;
 
   i32 n_factors=args->n_factors;
+  i32 n_unary = args->n_unary;
   i32 n_params = n_factors*4*2 + args->n_unary;
 
   PyObject *X_list=args->X_list;
@@ -68,7 +68,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   assert(err==cudaSuccess);
   
   f32 *unary_w = V_data + n_factors*8;//sizeof(f32)*n_factors*8;
-  err=cudaMemcpyAsync(unary_w, self->unary, N_UNARY*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  err=cudaMemcpyAsync(unary_w, self->unary, n_unary*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
   assert(err==cudaSuccess);
   
   //TODO: copy V to V_data
@@ -93,7 +93,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   }
 
   f32 *V_change;
-  cudaMalloc(&V_change, sizeof(f32)*(n_factors*4*2+N_UNARY));
+  cudaMalloc(&V_change, sizeof(f32)*(n_factors*4*2+n_unary));
   f32 *unary_change = V_change + n_factors*4*2;
 
   i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
@@ -202,6 +202,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   
   /* error data allocation*/
   void ** error_data = (void**) malloc(sizeof(void*) * n_samples);
+
   gpu_dice_error_data_t * gerror_data;
   switch(args->error_func) {
   case DICE:
@@ -317,7 +318,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   // copy V_data back to numpy space...
   // also copy unary data back to numpy space3
   cudaMemcpy(self->V_data, V_data,  sizeof(f32)*(n_factors*8), cudaMemcpyDeviceToHost);
-  cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(N_UNARY), cudaMemcpyDeviceToHost);
+  cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(n_unary), cudaMemcpyDeviceToHost);
 
   //Time to clean up everything
   cudaFree(V_data);
@@ -392,6 +393,7 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   npy_intp *dims = args->dims;
   i32 n_factors = args->self->n_factors;
   i32 n_unary = args->self->n_unary;
+  i32 n_chan = args->self->n_inp_channels;
 
   i32 * EY = args->gdata->EY;
   f32 * V = args->gdata->V_data;
@@ -401,7 +403,7 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   cudaStreamCreate(&stream);
   
   i32 n_elem;
-  i32 n_params = n_factors*4*2+ args->self->n_unary;
+  i32 n_params = n_factors*4*2+ n_unary;
   
   n_elem=(n_factors*4*2+n_unary);
   dim3 blockGrid(n_elem/128 + 1);
@@ -409,9 +411,11 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   gpu_fill_value<<<blockGrid, threadGrid,0,stream>>>(V_change,0.0, n_elem);
   //note, this also fills unary_change
   f32 alpha = args->alpha;
+  dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
-  gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
+  //gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
+  gpu_loopy_V_F__computeunary<<<dimGrid, singGrid,0 ,stream >>>(X, unary_w, unary_c, n_chan);
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
   dim3 threadGrid1(16,16,2);
 

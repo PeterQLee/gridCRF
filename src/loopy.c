@@ -351,7 +351,13 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   
   f32 a,b;
   npy_intp * dims= PyArray_DIMS(X);
-  i64 n_factors=self->n_factors;
+
+
+  i32 n_factors=self->n_factors;
+  i32 n_unary  = self->n_unary;
+  i32 n_params = n_factors*8+n_unary;
+  i32 n_chan = self->n_inp_channels;
+  
   f32 max_marg_diff=0.0f;
   f32 stop_thresh=lpar->stop_thresh;
   
@@ -386,8 +392,10 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
       
       f64 base= *((f64*)PyArray_GETPTR3(X,x,y,0));
       *((f64*)tmp) = base;
-      tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
-      tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
+
+      _compute_unary((f32*)tmp,(f32*)&base,unary,n_chan);
+      //tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
+      //tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
       r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
       //Warning: possible segfault
 	
@@ -495,4 +503,15 @@ void *_loopy_label(loopycpu_t *l_args) {
  loopyLabelstop:
   return NULL;
 
+}
+
+//TODO: this may cause some naming errors
+static void _compute_unary(f32 *tmp, f32 *base, f32 *unary, i32 n_chan){
+  i32 i;
+  tmp[0]=0.0f;
+  tmp[1]=0.0f;
+  for (i=0;i<n_chan; i++) {
+    tmp[0] += -unary[i]*base[i];
+    tmp[1] += -unary[n_chan+i]*base[i];
+  }
 }

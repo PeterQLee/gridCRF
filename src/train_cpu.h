@@ -60,6 +60,9 @@ typedef struct {
 
 static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary);
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads);
+
+static void _compute_unary(f32 *yv, f32 *unary, f32 *tmp, i32 n_chan);
+static void _compute_change_unary(f32 *change, f32 *unary_change, f32 *tmp, i32 n_chan);
 static void* _calculate_gradient(gradient_t *args);
 
 #endif

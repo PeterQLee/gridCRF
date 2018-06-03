@@ -19,7 +19,6 @@ extern "C" {
 }
 
 //#define CPU_TEST
-#define N_UNARY 4
 #ifdef CPU_TEST
 void __debug_loopy_V_F(loopygpu_t *targs);
 void *_loopy_label(loopygpu_t *l_args);
@@ -43,6 +42,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   glpar.eval = lpar->eval;
 
   i32 n_factors=self->n_factors;
+  i32 n_unary = self->n_unary;
   
   f32 totL;
   i32 n_samples = 1;
@@ -66,12 +66,12 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
 
   /* parameters */
   f32 * V_data;
-  cudaMalloc(&V_data, sizeof(f32)*(n_factors*8 + N_UNARY));//check this...
+  cudaMalloc(&V_data, sizeof(f32)*(n_factors*8 + n_unary));//check this...
   err=cudaMemcpyAsync(V_data, self->V_data, sizeof(f32)*(n_factors*8), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
   assert(err==cudaSuccess);
   
   f32 *unary_w = V_data + n_factors*8;//sizeof(f32)*n_factors*8;
-  err=cudaMemcpyAsync(unary_w, self->unary, N_UNARY*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  err=cudaMemcpyAsync(unary_w, self->unary, n_unary*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
   assert(err==cudaSuccess);
   
   //TODO: copy V to V_data
@@ -395,6 +395,7 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   i32 i;
   gridCRF_t *self = targs->self;
   f32 *X = targs->gdata->X;
+  i32 n_chan = targs->self->n_inp_channels;
 
   gpu_loopy_params_t * lpar = targs->lpar;
   
@@ -430,7 +431,7 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   dim3 dimGrid(dims[0],dims[1]);
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
-  gpu_loopy_V_F__computeunary<<<dimGrid, singGrid, 0, stream[0]>>>(X, unary_w, unary_c);
+  gpu_loopy_V_F__computeunary<<<dimGrid, singGrid, 0, stream[0]>>>(X, unary_w, unary_c, n_chan);
   gpu_loopy_V_F__sumfactors<<<dimGrid, factorgrid, sizeof(f32)*n_factors*8, stream[0]>>>(F_V, V_F, unary_c, NULL, n_factors);
   gpu_loopy_V_F__marginal<<<dimGrid, singGrid, 0, stream[0]>>>(F_V, unary_c, mu, n_factors, stop_thresh, converged);
   
@@ -443,20 +444,29 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
  
 }
 
-__global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c){
-    // one possibility. X is not aligned properly.
+__global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c, i32 n_chan){
+   
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
 
-  unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = -(	    \
-    X[COORD2(x,y,gridDim.x, gridDim.y, 2)] * unary_w[c*2] + \
-      X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1]);
-    
+  f32 sum = 0.0f;
+  i32 i;
+  for (i=0;i<n_chan;i++) {
+    sum -= X[COORD2(x,y,gridDim.x, gridDim.y, n_chan) + i] * unary_w[c*n_chan + i];
+  }
+  unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c ] = sum;
+
+  
+  /*unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = -(   \
+    X[COORD2(x,y,gridDim.x, gridDim.y, 2)] * unary_w[c*2] +		\
+    X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1]);
+  */
+  
 }
 
 __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, const i32 * refimg, i32 n_factors ){
-  //THIS IS WRONG!
+
   extern __shared__ f32 array[];
   f32 *shared_f_v = (f32*) array;
   f32 *shared_v_f = (f32*) &array[n_factors*4];//prob doesn't fix
