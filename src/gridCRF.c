@@ -55,6 +55,7 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
     PyErr_SetString(PyExc_ValueError, "Unary must be a multiple of 4");
     return 1;
   }
+  self->n_inp_channels = self->n_unary/2;
   //depth_=1;
   depth=(i64)depth_;
   self->depth=depth;
@@ -285,8 +286,8 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
       PyErr_SetString(PyExc_TypeError, "Label image must be 32-bit unsigned ints");
       return NULL;
     }
-    if (!PyArray_Check(X) || PyArray_NDIM(X) !=3 || PyArray_DIMS(X)[2] !=2) {
-      PyErr_SetString(PyExc_ValueError, "train must only contain 3 dimensional arrays, of a binary image");
+    if (!PyArray_Check(X) || PyArray_NDIM(X) !=3 || PyArray_DIMS(X)[2]%2 !=0 || PyArray_DIMS(X)[2]%2!=self->n_unary/2) {
+      PyErr_SetString(PyExc_ValueError, "train must only contain 3 dimensional arrays, of twice the number of unarys when constructed");
       return NULL;
     }
     if (!PyArray_Check(Y) || PyArray_NDIM(Y) !=3 || PyArray_DIMS(Y)[2] !=2) {
@@ -312,7 +313,7 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
 
   static char * kwlist []= {"X","stop_thresh","max_its","n_threads" ,NULL};
   if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fii",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&(lpar.n_threads))) return NULL;
-  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 || PyArray_DIMS(test)[2] !=2) {
+  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 ||  PyArray_DIMS(test)[2]%2 !=0 || PyArray_DIMS(test)[2]%2!=self->n_unary/2) {
     PyErr_SetString(PyExc_ValueError, "Input must be a 3 dimensional array");
     return NULL;
   }

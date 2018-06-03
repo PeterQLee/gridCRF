@@ -41,13 +41,14 @@ typedef struct{
 
 typedef struct{
   PyObject_HEAD
-  i64 n_outcomes;
-  i64 n_factors, n_unary;
-  i64 depth;
+  i32 n_outcomes;
+  i32 n_factors, n_unary, n_inp_channels;
+  i32 depth;
   PyArrayObject *V, *unary_pyarr;
   f32 *V_data;
   f32 *unary;
   i32 gpuflag;
+  
   //i32 *com, *rom;
 }gridCRF_t;
 

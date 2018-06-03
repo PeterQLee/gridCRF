@@ -284,13 +284,13 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       case RMSPROP:
 	//summate gradients
 	for (h=1;h<n_threads;h++) {
-	  for (k=0;k<n_factors*4*2;k++){
+	  for (k=0;k<n_factors*4*2+n_unary;k++){
 	    targs[0].V_change[k]+=lr*targs[h].V_change[k];
 	  }
-	  targs[0].V_change[n_factors*4*2]+=targs[h].V_change[n_factors*4*2];
-	  targs[0].V_change[n_factors*4*2+1]+=targs[h].V_change[n_factors*4*2+1];
-	  targs[0].V_change[n_factors*4*2+2]+=targs[h].V_change[n_factors*4*2+2];
-	  targs[0].V_change[n_factors*4*2+3]+=targs[h].V_change[n_factors*4*2+3];
+	  /* targs[0].V_change[n_factors*4*2]+=targs[h].V_change[n_factors*4*2]; */
+	  /* targs[0].V_change[n_factors*4*2+1]+=targs[h].V_change[n_factors*4*2+1]; */
+	  /* targs[0].V_change[n_factors*4*2+2]+=targs[h].V_change[n_factors*4*2+2]; */
+	  /* targs[0].V_change[n_factors*4*2+3]+=targs[h].V_change[n_factors*4*2+3]; */
 	  totL+=targs[h].L/n_threads;
 	}
 	RMSprop_swap_vstore((rmsprop_t*) update_data, j, 4*2*n_factors+n_unary);
@@ -303,10 +303,9 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	for (k=0;k<n_factors*4*2;k++){
 	  V[k]+=lr*targs[h].V_change[k] - lr * LAMBDA * V[k] ;
 	}
-	unary[0]+=lr*targs[h].V_change[n_factors*4*2] - lr * LAMBDA * unary[0];
-	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1] - lr * LAMBDA * unary[1];
-	unary[2]+=lr*targs[h].V_change[n_factors*4*2+2] - lr * LAMBDA * unary[2];
-	unary[3]+=lr*targs[h].V_change[n_factors*4*2+3] - lr * LAMBDA * unary[3];
+	for (k=0;k<n_unary;k++){
+	  unary[k]+=lr*targs[h].V_change[n_factors*4*2 + k] - lr * LAMBDA * unary[k];
+	}
 	totL+=targs[h].L/n_threads;
       }
 #else
@@ -317,22 +316,26 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	    converged = 0;
 	  }
 	}
-	unary[0]+=lr*targs[h].V_change[n_factors*4*2];
+	for (k=0;k<n_unary;k++){
+	  unary[k]+=lr*targs[h].V_change[n_factors*4*2 + k];
+	  if (fabs(lr*targs[h].V_change[k])>stop_tol){
+	    converged = 0;
+	  }
+	}
+	/*unary[0]+=lr*targs[h].V_change[n_factors*4*2];
 	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1];
 	unary[2]+=lr*targs[h].V_change[n_factors*4*2+2];
-	unary[3]+=lr*targs[h].V_change[n_factors*4*2+3];
-	if (fabs(lr*targs[h].V_change[k])>stop_tol){
-	  converged = 0;
-	}
-	if (fabs(lr*targs[h].V_change[k+1])>stop_tol){
-	  converged = 0;
-	}
-	if (fabs(lr*targs[h].V_change[k+2])>stop_tol){
-	  converged = 0;
-	}
-	if (fabs(lr*targs[h].V_change[k+3])>stop_tol){
-	  converged = 0;
-	}
+	unary[3]+=lr*targs[h].V_change[n_factors*4*2+3];*/
+	
+	/* if (fabs(lr*targs[h].V_change[k+1])>stop_tol){ */
+	/*   converged = 0; */
+	/* } */
+	/* if (fabs(lr*targs[h].V_change[k+2])>stop_tol){ */
+	/*   converged = 0; */
+	/* } */
+	/* if (fabs(lr*targs[h].V_change[k+3])>stop_tol){ */
+	/*   converged = 0; */
+	/* } */
 	
 	totL+=targs[h].L/n_threads;
       }
@@ -393,6 +396,27 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
 }
 
+
+
+
+
+static void _compute_unary(f32 *yv, f32 *unary, f32 *tmp, i32 n_chan) {
+  i32 i;
+  for (i=0;i<n_chan; i++) {
+    yv[0] += unary[i]*tmp[i];
+    yv[1] += unary[n_chan+i]*tmp[i];
+  }
+}
+
+static void _compute_change_unary(f32 *change, f32 *unary_change, f32 *tmp, i32 n_chan) {
+  i32 i;
+  for (i=0;i<n_chan; i++) {
+    unary_change[i] += change[0]*tmp[i];
+    unary_change[n_chan+i] += change[1]*tmp[i];
+  }
+  
+}
+
 static void* _calculate_gradient(gradient_t *args) {
   i32 i,j;
   PyArrayObject *X= (PyArrayObject*)PyList_GetItem(args->X_list,*(args->instance_index));
@@ -409,13 +433,14 @@ static void* _calculate_gradient(gradient_t *args) {
   f32 *v;
   i32 *l;
   npy_intp *dims=args->dims;
-  i32 n_factors = args->n_factors;
   
-  memset(V_change, 0, sizeof(f32)*n_factors*4*2);
-  unary_change[0]=0.0f;
-  unary_change[1]=0.0f;
-  unary_change[2]=0.0f;
-  unary_change[3]=0.0f;
+  i32 n_factors = args->n_factors;
+  i32 n_unary = args->n_unary;
+  i32 n_params = n_factors * 8 + n_unary;
+  i32 n_chan = args->n_inp_channels;
+
+  /* Clear change var*/
+  memset(V_change, 0, sizeof(f32)*n_params);
 
   i32 n=0;
   f32 *tmp;
@@ -436,8 +461,10 @@ static void* _calculate_gradient(gradient_t *args) {
 	if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
 	tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-	yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
-	yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
+
+	_compute_unary(yv, unary, tmp, n_chan);
+	  //yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
+	  //yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
 	//l here is the estimated label
 	for (n=0;n<n_factors;n++) {
@@ -488,8 +515,8 @@ static void* _calculate_gradient(gradient_t *args) {
 	  L+=100;
 	}
 	change[0] = -scale * (((*l)&1)-yv[0]) ;
-	unary_change[0] += -scale*(((*l)&1)-yv[0])*tmp[0];
-	unary_change[1] += -scale*(((*l)&1)-yv[0])*tmp[1];
+	//unary_change[0] += -scale*(((*l)&1)-yv[0])*tmp[0];
+	//unary_change[1] += -scale*(((*l)&1)-yv[0])*tmp[1];
 
 	
 	l=((i32*)PyArray_GETPTR3(Y,i,j,1));
@@ -509,9 +536,11 @@ static void* _calculate_gradient(gradient_t *args) {
 	//printf("yv %f %f\n",yv[0],yv[1]);
 	change[1] = -scale * (((*l)&1)-yv[1]);
 
-	unary_change[2] += -scale*(((*l)&1)-yv[1])*tmp[0];
-	unary_change[3] += -scale*(((*l)&1)-yv[1])*tmp[1];
-	//printf("Part L %f %f %f %d %d\n",yv[0],yv[1],L ,  *((i32*)PyArray_GETPTR3(Y,i,j,0)),*l);
+	//unary_change[2] += -scale*(((*l)&1)-yv[1])*tmp[0];
+	//unary_change[3] += -scale*(((*l)&1)-yv[1])*tmp[1];
+
+	_compute_change_unary(change, unary_change, tmp, n_chan);
+	
       
 	if (isinf(L)){
 	  printf("ISINF\n");
@@ -557,8 +586,9 @@ static void* _calculate_gradient(gradient_t *args) {
 	if (*((i32 *)PyArray_GETPTR3(Y,i,j,0)) == 0  && *((i32 *)PyArray_GETPTR3(Y,i,j,1)) == 0 )continue;
       
 	tmp=(f32*)PyArray_GETPTR3(X,i,j,0);
-	yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
-	yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
+	_compute_unary(yv, unary, tmp, n_chan);
+	//yv[0]=(unary[0]*tmp[0]+unary[1]*tmp[1]);
+	//yv[1]=(unary[2]*tmp[0]+unary[3]*tmp[1]);
 
 	//l here is the estimated label
 	for (n=0;n<n_factors;n++) {
@@ -660,12 +690,13 @@ static void* _calculate_gradient(gradient_t *args) {
 	change[0] = scale * (dL_dp[0] * (yv[0] - yv[0]*yv[0]) + dL_dp[1] * (-yv[0]*yv[1]));
 	change[1] = scale * (dL_dp[1] * (yv[1] - yv[1]*yv[1]) + dL_dp[0] * (-yv[1]*yv[0]));
 	  
-	//TODO: this isn't thread safe	
-	unary_change[0] += change[0] * tmp[0];
-	unary_change[1] += change[0] * tmp[1];
+	//TODO: this isn't thread safe
+	_compute_change_unary(change, unary_change, tmp, n_chan);
+	/* unary_change[0] += change[0] * tmp[0]; */
+	/* unary_change[1] += change[0] * tmp[1]; */
 
-	unary_change[2] += change[1] * tmp[0];
-	unary_change[3] += change[1] * tmp[1];
+	/* unary_change[2] += change[1] * tmp[0]; */
+	/* unary_change[3] += change[1] * tmp[1]; */
 
 	for (n=0;n<n_factors;n++){
 	  if (i+ainc[n] < 0 || i+ainc[n]>=dims[0] || j+binc[n] < 0 || j+binc[n] >= dims[1]) continue;
