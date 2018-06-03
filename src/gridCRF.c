@@ -73,6 +73,7 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   
   npy_intp dims[2]= {n_factors*2, 4};
   self->V=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims,NPY_FLOAT32,self->V_data);
+  //PyArray_ENABLEFLAGS(self->V, NPY_OWNDATA);
   npy_intp dims1[2]= {2, 2};
   self->unary_pyarr=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims1,NPY_FLOAT32,self->unary);
   Py_INCREF(self->V);

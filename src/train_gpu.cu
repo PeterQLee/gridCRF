@@ -217,7 +217,9 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
       assert(err==cudaSuccess);
       error_data[j] = (void*) gerror_data;
     }
-
+    break;
+  case ENTROPY:
+    break;
   }
   void *update_data;
   gpu_rmsprop_t *rmstmp;
@@ -321,6 +323,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   cudaFree(RE);
   cudaFree(CE);
 
+  /* Clean error function data */
   switch(args->error_func) {
   case DICE:
     cudaFree(((gpu_dice_error_data_t*)error_data[0])->prod);
@@ -328,6 +331,23 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
       cudaFree(((gpu_dice_error_data_t*)error_data[j])->prob);
     }
     free(error_data);
+  }
+
+  /* Clean update data */
+  switch(args->update_type){
+  case RMSPROP:
+    rmstmp = (gpu_rmsprop_t*) update_data;
+    for (i=0;i<n_samples;i++) {
+      cudaFree(rmstmp->vstore_agg[i*2]);
+      cudaFree(rmstmp->vstore_agg[i*2+1]);
+    }
+    free(rmstmp->vstore_agg);
+    free(rmstmp->vstore);
+    free(update_data);
+    break;
+    
+  case SGD:
+    break;
   }
 
   cudaFree(g_args.dev_L);
