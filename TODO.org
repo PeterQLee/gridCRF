@@ -257,3 +257,4 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 ** TODO test
 ** TODO  Warning, watch out for nans, these could occur when sum = 0
 
+* DONE Fix rmsp current offset in CPU to do it at the end of epoch.

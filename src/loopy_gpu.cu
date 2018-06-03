@@ -122,7 +122,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
 	n++;
       }
     }
-
+    
     cudaMalloc(&com_l[h],  sizeof(i32)*n_factors);
     err=cudaMemcpyAsync(com_l[h], _com, sizeof(i32)*n_factors, cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
     assert(err==cudaSuccess);

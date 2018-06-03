@@ -83,7 +83,7 @@ static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors
       *(rmsp->converged) = 0;
     }
   }
-  rmsp->current_offset= (rmsp->current_offset ^ 1);
+  
 }
 
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
@@ -341,6 +341,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
     
 
     }
+    ((rmsprop_t*)update_data)->current_offset= (((rmsprop_t*)update_data)->current_offset ^ 1);
     //TODO: check tolerances on each  data.
     // also change rmsprop to save gradients for each data sample
   }

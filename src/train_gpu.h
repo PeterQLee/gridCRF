@@ -32,19 +32,32 @@ typedef struct {
   i32 *dev_Y;
   i32 *dev_ainc, *dev_binc;
   npy_intp * dims;
+  i32 sample_index;
 
   gpu_loopy_data *gdata;
   
   i32 num_params, n_factors;
   f32 alpha;
-  PyArrayObject *(*loopy_func) (gridCRF_t*, PyArrayObject*, loopy_params_t*,PyArrayObject*); 
+
   gpu_loopy_params_t *lpar;
   f32 *dev_L;
   f32 host_L;
   error_func_e error_func;
-  void * error_data; 
+  void * error_data;
+  
+  update_type_e update_type;
+  void * update_data;
+  
+  f32 stop_tol;
 
+  i32 *converged;
 }gpu_gradient_t;
+
+typedef struct {
+  f32 gamma, alpha, **vstore_agg, **vstore, stop_tol, *v_curr, *v_old;
+  i32 current_offset, *converged;
+}gpu_rmsprop_t;
+
 
 void GPU_grad_descent(gradient_t *args, i32 epochs, i32 dummy);
 /* 

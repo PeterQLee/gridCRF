@@ -233,6 +233,23 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   Py_ssize_t n;
   i32 i;
   if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifffii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.gamma), &(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type) )) return NULL;
+
+  
+  if (tpt.epochs < 0 ) {
+    PyErr_SetString(PyExc_ValueError, "epochs must be positive");
+    return NULL;
+  }
+
+  if (tpt.alpha < 0 ) {
+    PyErr_SetString(PyExc_ValueError, "alpha must be positive");
+    return NULL;
+  }
+
+  if (tpt.gamma < 0 || tpt.gamma > 1) {
+    PyErr_SetString(PyExc_ValueError, "gamma must be between 0 and 1 inclusive");
+    return NULL;
+  }
+  
   //Needs to be a list of nd arrays
   if (!PyList_Check(train)) {
     PyErr_SetString(PyExc_ValueError, "train must be a list");
@@ -242,7 +259,9 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
     PyErr_SetString(PyExc_ValueError, "lab must be a list");
     return NULL;
   }
-  
+
+
+
  //If all these checks have passed the input data is valid.
   //Now we can begin training iterations
   
