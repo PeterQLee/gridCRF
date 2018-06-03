@@ -448,7 +448,7 @@ __global__ void gpu_loopy_V_F__computeunary(f32 * X, f32 *unary_w, f32 *unary_c)
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 c = threadIdx.x;
-
+ 
   unary_c[COORD2(x,y,gridDim.x, gridDim.y, 2) + c] = -(	    \
     X[COORD2(x,y,gridDim.x, gridDim.y, 2)] * unary_w[c*2] + \
       X[COORD2(x,y,gridDim.x, gridDim.y, 2) + 1] * unary_w[c*2 + 1]);

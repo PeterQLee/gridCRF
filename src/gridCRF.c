@@ -313,7 +313,7 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
 
   static char * kwlist []= {"X","stop_thresh","max_its","n_threads" ,NULL};
   if (!PyArg_ParseTupleAndKeywords(args,kwds,"O|fii",kwlist,&test,&(lpar.stop_thresh),&(lpar.max_its),&(lpar.n_threads))) return NULL;
-  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 ||  PyArray_DIMS(test)[2]%2 !=0 || PyArray_DIMS(test)[2]%2!=self->n_unary/2) {
+  if (!PyArray_Check(test) || PyArray_NDIM(test) !=3 ||  PyArray_DIMS(test)[2]%2 !=0 || PyArray_DIMS(test)[2]!=self->n_unary/2) {
     PyErr_SetString(PyExc_ValueError, "Input must be a 3 dimensional array");
     return NULL;
   }
