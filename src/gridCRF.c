@@ -45,17 +45,18 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   self->V=NULL;
   self->V_data=NULL;
   self->depth=0;
-  self->n_unary = 4;
+
+  self->n_inp_channels = 2;
   self->gpuflag=0;
   npy_int depth_=0;
-  static char * kwlist []= {"depth", "n_unary", "gpuflag" ,NULL};
+  static char * kwlist []= {"depth", "n_inp_channels", "gpuflag" ,NULL};
   
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &self->n_unary, &(self->gpuflag))) return 1;
-  if (self->n_unary%4!=0) {
-    PyErr_SetString(PyExc_ValueError, "Unary must be a multiple of 4");
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &self->n_inp_channels, &(self->gpuflag))) return 1;
+  if (self->n_unary%2!=0) {
+    PyErr_SetString(PyExc_ValueError, "N channels must be a multiple of 2");
     return 1;
   }
-  self->n_inp_channels = self->n_unary/2;
+  self->n_unary = self->n_inp_channels * 2;
   //depth_=1;
   depth=(i64)depth_;
   self->depth=depth;

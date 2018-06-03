@@ -392,6 +392,7 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   npy_intp *dims = args->dims;
   i32 n_factors = args->self->n_factors;
   i32 n_unary = args->self->n_unary;
+  i32 n_chan = args->self->n_inp_channels;
 
   i32 * EY = args->gdata->EY;
   f32 * V = args->gdata->V_data;
@@ -413,7 +414,7 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   dim3 factorgrid(2*n_factors,2);
   dim3 singGrid(2);
   //gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
-  gpu_loopy_V_F__computeunary<<<dimGrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
+  gpu_loopy_V_F__computeunary<<<dimGrid, singGrid,0 ,stream >>>(X, unary_w, unary_c, n_chan);
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
   dim3 threadGrid1(16,16,2);
 
