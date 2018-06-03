@@ -24,7 +24,7 @@ import gridCRF
 gridCRF is based around two main functions: fit and predict.
 
 ## fit
-fit requires two arguments, a list of training input images and a list of training label images. The training images must be 32bit float 3D arrays, with dimensions width, height, and probability likelihood channel. Currently, only binary images are supported (i.e. probability channel = 2). Also, these probability channels should be log transformed, as shown in the example.
+fit requires two arguments, a list of training input images and a list of training label images. The training images must be 32bit float 3D arrays, with dimensions width, height, and probability likelihood channel. Currently, multi-binary images are supported (i.e. probability channel = 2) as input so you can incorperate predictions from multiple binary classifiers. Also, these probability channels should be log transformed, as shown in the example.
 
 The training label images must be 32bit integer arrays, with matching dimensions of width, height, and channel.
 
