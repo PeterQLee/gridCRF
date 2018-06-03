@@ -508,6 +508,8 @@ void *_loopy_label(loopycpu_t *l_args) {
 //TODO: this may cause some naming errors
 static void _compute_unary(f32 *tmp, f32 *base, f32 *unary, i32 n_chan){
   i32 i;
+  tmp[0]=0.0f;
+  tmp[1]=0.0f;
   for (i=0;i<n_chan; i++) {
     tmp[0] += -unary[i]*base[i];
     tmp[1] += -unary[n_chan+i]*base[i];
