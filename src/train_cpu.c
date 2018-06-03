@@ -95,14 +95,16 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   
   i64 h,i,j,k;
   //PyArrayObject *EY;
-  const i32 N_UNARY=4;
   f32 *unary=(args->self)->unary;
   f32 *V=(args->self)->V_data;
   pthread_t *threads= malloc(sizeof(pthread_t)*n_threads);
   npy_intp *dims=args->dims;
   
 
-  i64 n_factors=args->n_factors;
+  i32 n_factors=args->n_factors;
+  i32 n_unary = args->n_unary;
+  i32 n_params = n_factors*8 + n_unary;
+  
   gradient_t *targs=malloc(sizeof(gradient_t) * n_threads);
   npy_intp *start= malloc(sizeof(npy_intp)*n_threads*2);
   npy_intp *stop= malloc(sizeof(npy_intp)*n_threads*2);
@@ -134,7 +136,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   }
   
   for (h=0;h<n_threads;h++ ){
-    V_change_l[h] = _mm_malloc(sizeof(f32)*(n_factors*4*2+N_UNARY),32);
+    V_change_l[h] = _mm_malloc(sizeof(f32)*(n_params),32);
   }
 
   /* Process error function data */
@@ -188,7 +190,6 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
    */
   void *update_data;
   i32 converged = 0;
-  i32 n_unary = 4;
   switch(args->update_type) {
   case RMSPROP:
 
@@ -203,10 +204,10 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
       rmstmp->stop_tol = args->stop_tol;
       rmstmp->converged = &converged;
       for (i=0;i<n_samples;i++){
-	rmstmp->vstore_agg[i*2] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),64);
-	rmstmp->vstore_agg[i*2+1] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+args->n_unary),64); 
+	rmstmp->vstore_agg[i*2] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+n_unary),64);
+	rmstmp->vstore_agg[i*2+1] = (f32*) _mm_malloc(sizeof(f32)*(n_factors*4*2+n_unary),64); 
 
-	for (j=0;j<(n_factors*4*2+args->n_unary);j++) {
+	for (j=0;j<(n_factors*4*2+n_unary);j++) {
 	  rmstmp->vstore_agg[i*2][j]=0.01f;
 	  rmstmp->vstore_agg[i*2+1][j]=0.01f;
 	}

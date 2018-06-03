@@ -45,11 +45,16 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   self->V=NULL;
   self->V_data=NULL;
   self->depth=0;
+  self->n_unary = 4;
   self->gpuflag=0;
   npy_int depth_=0;
-  static char * kwlist []= {"depth", "gpuflag" ,NULL};
+  static char * kwlist []= {"depth", "n_unary", "gpuflag" ,NULL};
   
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|i", kwlist, &depth_, &(self->gpuflag))) return 1;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &(self->gpuflag))) return 1;
+  if (self->n_unary%4!=0) {
+    PyErr_SetString(PyExc_ValueError, "Unary must be a multiple of 4");
+    return 1;
+  }
   //depth_=1;
   depth=(i64)depth_;
   self->depth=depth;
@@ -59,7 +64,6 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
     n_factors= n_factors + i*4;
   }
   self->n_factors= n_factors;
-  self->n_unary = 4;
   self->V_data = _mm_malloc((n_factors*2*4 + self->n_unary) * sizeof(f32),64); //TODO: use aligned malloc
 
   self->unary = &(self->V_data[n_factors*2*4]);
@@ -74,7 +78,7 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   npy_intp dims[2]= {n_factors*2, 4};
   self->V=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims,NPY_FLOAT32,self->V_data);
   //PyArray_ENABLEFLAGS(self->V, NPY_OWNDATA);
-  npy_intp dims1[2]= {2, 2};
+  npy_intp dims1[2]= {self->n_unary/2, self->n_unary/2};
   self->unary_pyarr=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims1,NPY_FLOAT32,self->unary);
   Py_INCREF(self->V);
   Py_INCREF(self->unary_pyarr);
@@ -90,7 +94,7 @@ static PyObject * gridCRF_new (PyTypeObject *type, PyObject *args, PyObject *kwd
 
 
 static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_params_t *tpt){
-  #define NUM_UNARY 4
+
   #define VERBOSE 0 
   i64 depth= self->depth;
   i32 i,j,n,a,b,d,k;
@@ -100,7 +104,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   i64 n_unary = self->n_unary;
   f32 *V = self->V_data;
 
-  f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+NUM_UNARY),32);
+  f32 *V_change = _mm_malloc(sizeof(f32)*(n_factors*4*2+n_unary),32);
 
   n=self->depth;
   //f64 *stack[self->n_factors ]; //TODO, preallocate this on heap.
@@ -122,7 +126,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   
   f32 *unary = self->unary;
   f32 *unary_change  = &V_change[n_factors*4*2];
-  i32 num_params=n_factors*4*2 +NUM_UNARY;
+  i32 num_params=n_factors*4*2 +n_unary;
   i32 cur,last;
   
   //printf("n_factors %d\n",n_factors);
