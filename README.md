@@ -38,7 +38,13 @@ for i in range(len(probmap)):
     tmp[np.isinf(tmp)] = 0
     logprobmap.append(tmp)
 
-s = gridCRF.gridCRF(1,gpuflag=1) #Have a factor width of 1, enabling gpu inference
+##########
+# Initialize a gridCRF
+# factor width of 1,
+# Using binary log probabilities as input factors, and
+# enabling gpu inference
+
+s = gridCRF.gridCRF(1, n_inp_channels=2, gpuflag=1) 
 s.fit(logprobmap, labels)
 
 
