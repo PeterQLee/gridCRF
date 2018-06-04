@@ -45,8 +45,7 @@ for i in range(len(probmap)):
 # enabling gpu inference
 
 s = gridCRF.gridCRF(1, n_inp_channels=2, gpuflag=1) 
-s.fit(logprobmap, labels)
-
+s.fit(logprobmap,labels,epochs=30,alpha=10,gamma=0.95,error_type =1, stop_tol=0.001, update_type = 1)
 
 ```
 
