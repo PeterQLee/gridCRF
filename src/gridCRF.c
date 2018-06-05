@@ -25,6 +25,10 @@ f32 ALPHA=0.001;
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
 }
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {}
+void _mm_free(void* data){free(data);}
+void * _mm_malloc(size_t size, i32 n) {
+  return malloc(size);
+}
 static void gridCRF_dealloc(gridCRF_t *self) {
   printf("Dealloc\n");
   //if (self->V_data != NULL)

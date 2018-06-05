@@ -29,9 +29,9 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 
   gpu_loopy_params_t lpar;
   lpar.max_its = args->lpar->max_its;
-  lpar.stop_thresh = args->lpar->stop_thresh;
-  lpar.eval = args->lpar->eval;
 
+  lpar.eval = args->lpar->eval;
+  //lpar.stop_thresh = 0.001f;// args->lpar->stop_thresh;
   i32 n_factors=args->n_factors;
   i32 n_unary = args->n_unary;
   i32 n_params = n_factors*4*2 + args->n_unary;

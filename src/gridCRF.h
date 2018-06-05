@@ -23,14 +23,13 @@ Copyright 2018 Peter Q. Lee
 #include <numpy/arrayobject.h>
 #include <types.h>
 #include <math.h>
-#include "immintrin.h"
-#include "optimize.h"
+//#include "immintrin.h"
+//#include "optimize.h"
 #include "gridtypes.h"
-#include "loopy.h"
+//#include "loopy.h"
 #include "loopy_gpu.h"
-#include "train_cpu.h"
+//#include "train_cpu.h"
 #include "train_gpu.h"
-
 static const char mainobj_docstr[] = \
   "Use this class to initialize a gridCRF model\n\n"\
   "Initialization parameters:\n"\

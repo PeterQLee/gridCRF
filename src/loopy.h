@@ -17,7 +17,7 @@ Copyright 2018 Peter Q. Lee
 #ifndef LOOPY_H
 #define LOOPY_H
 #include "gridtypes.h"
-#include "immintrin.h"
+//#include "immintrin.h"
 
 typedef struct{
   i32 *start, *stop; //threading

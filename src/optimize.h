@@ -16,7 +16,7 @@ Copyright 2018 Peter Q. Lee
 
 #include "types.h"
 #include <stdlib.h>
-#include "immintrin.h"
+//#include "immintrin.h"
 #ifndef OPTIMIZE_H
 #define OPTIMIZE_H
 typedef struct {

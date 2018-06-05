@@ -18,7 +18,7 @@ Copyright 2018 Peter Q. Lee
 #define TRAIN_CPU_H
 #include "gridtypes.h"
 #include <pthread.h>
-#include "immintrin.h"
+//#include "immintrin.h"
 #include "common.h"
 #include "loopy.h"
 
