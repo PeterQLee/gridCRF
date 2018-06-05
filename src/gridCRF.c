@@ -22,7 +22,9 @@ Copyright 2018 Peter Q. Lee
 f32 ALPHA=0.001;
 
 //m, epsilon, past, dleta, max_iterations, linesearch, max_linesearch, min_step, max_step,ftol,wolfe. gtol,xtp;.prtjamtwose+c,orthantwise_start, orthantwise_end
-
+i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
+}
+void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {}
 static void gridCRF_dealloc(gridCRF_t *self) {
   printf("Dealloc\n");
   //if (self->V_data != NULL)

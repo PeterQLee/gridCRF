@@ -6,7 +6,8 @@ import os
 mode = 'gpu'
 if mode == 'gpu':
     setup_kwargs={
-        'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
+        #'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
+        'extra_compile_args':['-msse','-msse4'],
         'libraries': ['cudart', 'cudadevrt'],#, 'loopygpu'],
         'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],#, 'build/gpu/'],
         #'library_dirs':['/usr/local/lib','build/gpu'],
@@ -17,12 +18,14 @@ if mode == 'gpu':
     os.system('make')
     setup(name="gridCRF", version="1.0",
           include_dirs= [np.get_include(),'src/'],
-        ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c", "src/loopy.c", "src/train_cpu.c"],**setup_kwargs)
+        #ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c", "src/loopy.c", "src/train_cpu.c"],**setup_kwargs)
+          ext_modules=[Extension("gridCRF", [ "src/gridCRF.c","src/common.c"],**setup_kwargs)
     ])
 else:
     
     setup_kwargs={
         'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
+        
         
     }
     setup(name="gridCRF", version="1.0",
