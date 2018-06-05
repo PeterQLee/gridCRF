@@ -7,7 +7,7 @@ mode = 'gpu'
 if mode == 'gpu':
     setup_kwargs={
         #'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
-        'extra_compile_args':['-msse','-msse4'],
+        #'extra_compile_args':['-msse','-msse4'],
         'libraries': ['cudart', 'cudadevrt'],#, 'loopygpu'],
         'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],#, 'build/gpu/'],
         #'library_dirs':['/usr/local/lib','build/gpu'],

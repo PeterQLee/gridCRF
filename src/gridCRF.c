@@ -126,7 +126,6 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   f32 alpha=tpt->alpha;
   f32 gamma = tpt->gamma;
 
-  __m256 r1,r2;
   
   f32 *unary = self->unary;
   f32 *unary_change  = &V_change[n_factors*4*2];
