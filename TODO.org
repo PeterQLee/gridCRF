@@ -252,13 +252,14 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 
 ** DONE allocate error data for dice in both cpu and gpu
 
-** TODO Finish gpu implementation
+** DONE Finish gpu implementation
 
-** TODO test
-** TODO  Warning, watch out for nans, these could occur when sum = 0
+** DONE test
+** DONE Warning, watch out for nans, these could occur when sum = 0
 
 * DONE Fix rmsp current offset in CPU to do it at the end of epoch.\
 
 * TODO Fix numpy owned 
 * TODO universalize linalg operations
-* TODO Fix discrepency with rmsprop, dice cpu due to unary change.
+* DONE Fix discrepency with rmsprop, dice cpu due to unary change.
+* TODO Try approximation analysis for speed up of looping.

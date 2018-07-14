@@ -69,10 +69,9 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   self->V_data = _mm_malloc((n_factors*2*4 + self->n_unary) * sizeof(f32),64); //TODO: use aligned malloc
 
   self->unary = &(self->V_data[n_factors*2*4]);
-  self->unary[0]=0.0f;
-  self->unary[1]=0.0f;
-  self->unary[2]=0.0f;
-  self->unary[3]=0.0f;
+  for (i=0;i<self->n_unary;i++) {
+    self->unary[i]=0.0f;
+  }
   for (i=0;i<n_factors*4*2;i++) {
     self->V_data[i]=0.0f; //temporary
   }
