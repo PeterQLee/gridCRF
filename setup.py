@@ -4,9 +4,9 @@ import numpy as np
 import os
 os.makedirs('build/gpu', exist_ok=True)
 
-def compile_gpu():
+def compile_gpu_and_sse():
     setup_kwargs={
-        'extra_compile_args':['-msse','-msse4','-fno-inline','-O0'],
+        'extra_compile_args':['-msse','-msse2','-msse3','-msse4','-fno-inline','-O0'],
         'libraries': ['lbfgs','cudart', 'cudadevrt'],#, 'loopygpu'],
         'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],#, 'build/gpu/'],
         #'library_dirs':['/usr/local/lib','build/gpu'],
@@ -54,9 +54,10 @@ avxflag= False
 for s in r:
     if "avx2" in s:
         avxflag=True
+        break
 if not avxflag:
     print('compiling only with gpu')
-    compile_gpu()
+    compile_gpu_and_sse()
 
 else:
     compile_gpu_and_avx()

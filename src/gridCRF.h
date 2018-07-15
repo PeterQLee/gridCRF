@@ -23,7 +23,7 @@ Copyright 2018 Peter Q. Lee
 #include <numpy/arrayobject.h>
 #include <types.h>
 #include <math.h>
-#include "immintrin.h"
+#include <x86intrin.h>
 #include "optimize.h"
 #include "gridtypes.h"
 #include "loopy.h"

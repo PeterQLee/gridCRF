@@ -35,18 +35,32 @@ static void RMSprop_swap_vstore(rmsprop_t *rmsp, i32 index, i32 n_params) {
   rmsp->vstore[1] = rmsp->vstore_agg[index*2+1];
 }
 
-#ifdef __AVX__
+
 static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
   //TODO: make it so vstore is unique for each example
   f32 *v = rmsp->vstore[rmsp->current_offset];
   f32 *v_old = rmsp->vstore[(rmsp->current_offset^1)];
+  #ifdef __AVX__
   __m256 r1, gamma_256, invgamma_256, change, r4, alpha_256;
+  #elif __SSE__
+  __m128 r1, gamma_128, invgamma_128, change, r4, alpha_128;
+  #endif
+  
   i32 upper = n_factors*4*2+n_unary, i,j;
 
+  #ifdef __AVX__
   gamma_256 = _mm256_set1_ps(rmsp->gamma);
   invgamma_256 = _mm256_set1_ps(1.0f);
   invgamma_256 = _mm256_sub_ps(invgamma_256,gamma_256);
   alpha_256 = _mm256_set1_ps(rmsp->alpha);
+  #elif __SSE__
+  gamma_128 = _mm_set1_ps(rmsp->gamma);
+  invgamma_128 = _mm_set1_ps(1.0f);
+  invgamma_128 = _mm_sub_ps(invgamma_128,gamma_128);
+  alpha_128 = _mm_set1_ps(rmsp->alpha);
+  #endif
+
+  #ifdef __AVX__
   for (i=0;i<8*(upper/8);i+=8) {
     /* calculate change */
     r1 = _mm256_load_ps(&v_old[i]);
@@ -84,14 +98,48 @@ static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors
       *(rmsp->converged) = 0;
     }
   }
-  
-}
-#else
-static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
-}
-#endif
+  #elif __SSE__
+  for (i=0;i<4*(upper/4);i+=4) {
+    /* calculate change */
+    r1 = _mm_load_ps(&v_old[i]);
+    r1 = _mm_mul_ps(r1,gamma_128);
 
-#ifdef __AVX__
+    change = _mm_load_ps(&V_change[i]);
+    r4 = _mm_mul_ps(change,change);
+    r4 = _mm_mul_ps(invgamma_128,r4);
+    
+    r1 = _mm_add_ps(r1,r4); // this is the new v
+    _mm_store_ps(&v[i], r1); //make this the v change for the next run.
+
+    //Now do the update step
+    r1 = _mm_rsqrt_ps(r1); //Issue here is probably from r1 being 0.
+    r1 = _mm_mul_ps(alpha_128, r1);
+    r1 = _mm_mul_ps(r1, change);
+    r4 = _mm_load_ps(&V[i]);
+    r4 = _mm_add_ps(r4, r1);
+
+    // TODO: find a way to vectorize this
+    for (j=0;j<4;j++) {
+      if (fabs(r1[i]) > rmsp->stop_tol){
+	*(rmsp->converged) = 0;
+      }
+    }
+
+    // write to memory
+    _mm_store_ps(&V[i], r4);
+    assert(!isnan(V[i]));
+  }
+  for (i=4*(upper/4);i<upper;i++) {
+    v[i] = v_old[i]*rmsp->gamma + (1.0-rmsp->gamma)*V_change[i]*V_change[i];
+    V[i] += (rmsp->alpha)/sqrt(v[i])*V_change[i];
+    if (fabs((rmsp->alpha)/sqrt(v[i])*V_change[i]) > rmsp->stop_tol){
+      *(rmsp->converged) = 0;
+    }
+  }
+  #endif
+}
+
+
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   /*TODO: 
     Find out if we can avoid doing multiple loopy BPs by reusing the energies from the last iteration
@@ -385,10 +433,6 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   free(threads);
 
 }
-#else
-void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
-}
-#endif
 
 
 

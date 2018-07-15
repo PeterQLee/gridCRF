@@ -17,7 +17,7 @@ Copyright 2018 Peter Q. Lee
 #include "loopy.h"
 #include "loopy_gpu.h"
 
-#ifdef __AVX__
+
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
   #define VERBOSE 0
   //fix type
@@ -100,10 +100,15 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   i32 origin;
   /* transfer matrices */
   f32 *RE= _mm_malloc(2 * n_factors * 2 * sizeof(f32),32); 
-  f32 *CE= _mm_malloc(2 * n_factors * 2 * sizeof(f32),32); 
+  f32 *CE= _mm_malloc(2 * n_factors * 2 * sizeof(f32),32);
+
+  #ifdef __AVX__
   __m256 r1,r2,r3,r4;
+  #elif __SSE__
+  __m128 r1,r2,r3,r4;
+  #endif
 
-
+  #ifdef __AVX__
   for (i=0;i<2*n_factors*2;i+=8) {
     r1=_mm256_load_ps(&V_data[i]);
     r2=_mm256_load_ps(&V_data[i + n_factors*4]);
@@ -132,7 +137,27 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     CE[n_factors*2+i/2+3]=-r2[7];
   
   }
-
+  #elif __SSE__
+    for (i=0;i<2*n_factors*2;i+=4) {
+    r1=_mm_load_ps(&V_data[i]);
+    r2=_mm_load_ps(&V_data[i + n_factors*4]);
+    
+    /*Swap energies such that remote outcome=1 is seperated from
+      remote outcome=0*/
+    RE[i/2]=-r1[0];
+    RE[i/2+1]=-r1[1];
+    RE[n_factors*2+i/2]=-r1[2];
+    RE[n_factors*2+i/2+1]=-r1[3];
+    
+    
+    CE[i/2]=-r2[0];
+    CE[i/2+1]=-r2[1];
+    CE[n_factors*2+i/2]=-r2[2];
+    CE[n_factors*2+i/2+1]=-r2[3];
+  
+  }
+  #endif
+    
   pthread_t *threads = malloc(sizeof(pthread_t)*n_threads);
   loopycpu_t *targs = malloc(sizeof(loopycpu_t)*n_threads);
   // set up threads
@@ -145,7 +170,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
     stop[2*i]=s0/dims[1];
     stop[2*i+1]=s0%dims[1];
 
-    printf("start %d %d\nstop %d %d\n",start[2*i], start[2*i+1], stop[2*i], stop[2*i+1]);
+
     targs[i].start=&start[2*i];
     targs[i].stop=&stop[2*i];
     targs[i].com=com;
@@ -254,7 +279,13 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
   
   i32 origin;
   f32 *RE = l_args->RE, *CE = l_args->CE;
+  
+  #ifdef __AVX__
   __m256 r1,r2,r3,r4;
+  #elif __SSE__
+  __m128 r1,r2,r3,r4;
+  #endif
+  
   y=start[1];
   for (x=start[0];x<dims[0];x++) {
     for (;y<dims[1];y++ ){
@@ -266,6 +297,8 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 
 	if (refimg)
 	  l= *((i32*) PyArray_GETPTR2(refimg,x,y));
+
+	#ifdef __AVX__
 	for (n=0;n<n_factors && l; n+=4) {//Here
 
 	  /*
@@ -310,9 +343,52 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	    
 	  }
 	}
+	#elif __SSE__
+	for (n=0;n<n_factors && l; n+=2) {//Here
+
+	  /*
+	    r1: c0_00, c0_01
+	        c1_00, c1_01,
+		
+	    r2: c0_10, c0_11,
+	        c1_10, c1_11
+
+	  */
+	  r1=_mm_load_ps(&RE[n*2]);
+	  r2=_mm_load_ps(&RE[n_factors*2 + n*2]);
+	  r3=_mm_load_ps(&V_F[origin]);
+	  r4=(__m128)_mm_shuffle_epi32((__m128i)r3, 0xA0); //Outcomes that start at 0
+					  //for factors 0 and 1 and 2 and 3
+	  r1=_mm_add_ps(r1,r4);
+	  
+	  r4=(__m128)_mm_shuffle_epi32((__m128i)r3, 0xF5); //Outcomes that start at 1
+					  //for factors 0 and 1 and 2 and 3
+	  r2=_mm_add_ps(r2,r4);
+
+	  /* Take the max energy based on which state it came from*/
+	  r3=_mm_max_ps(r1,r2);
+	  
+	  /*Delegate r3 to appropriate destinations*/
+	
+	  for (m=n;m<n+2;m++){
+	    cop=co_pairs[m];
+	    if (x+cop.x <0 || x+cop.x >= dims[0] || y+cop.y < 0 || y+cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x+cop.x,y+cop.y))==0) continue;
+	    co=origin+com[m] + 2*(m) + n_factors*2; //what's the 2*(m-n) for?????
+	    //co=origin+com[m] + 2*(m-n) + n_factors*2; //what's the 2*(m-n) for?????
+	    if (!(co< 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[co] = r3[2*(m-n)];
+
+	      F_V[co+1] = r3[2*(m-n)+1];
+	    }
+	    
+	  }
+	}
+	#endif
 	
 	//do below and right factors
 	origin=COORD3(x,y,0,dims[0],dims[1],2*n_factors,2);
+	#ifdef __AVX__
 	for (n=n_factors;n<2*n_factors && l; n+=4) {
 	  r1=_mm256_load_ps(&CE[(n-n_factors)*2]);
 	  r2=_mm256_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
@@ -335,6 +411,31 @@ static void * _loopyCPU__FtoV(loopycpu_t *l_args){
 	    }
 	  }
 	}
+	#elif __SSE__
+	for (n=n_factors;n<2*n_factors && l; n+=2) {
+	  r1=_mm_load_ps(&CE[(n-n_factors)*2]);
+	  r2=_mm_load_ps(&CE[n_factors*2 + (n-n_factors)*2]);
+	  r3=_mm_load_ps(&V_F[origin]);
+	  r4=(__m128)_mm_shuffle_epi32((__m128i)r3, 0xA0);
+	  r1=_mm_add_ps(r1,r4);
+	  r4=(__m128)_mm_shuffle_epi32((__m128i)r3, 0xF5);
+	  r2=_mm_add_ps(r2,r4);
+	  r3=_mm_max_ps(r1,r2);
+	  //Delegate r3 to appropriate destination
+	  for (m=n;m<n+2;m++){ //todo, calculate rom
+	    cop=co_pairs[m-n_factors];
+	    if (x-cop.x <0 || x-cop.x >= dims[0] || y-cop.y < 0 || y-cop.y >=dims[1]) continue;
+	    if (refimg && *((i32*)PyArray_GETPTR2(refimg,x-cop.x,y-cop.y))==0) continue;
+	    co=origin+rom[m-n_factors] + 2*(m - n_factors);
+	    //co=origin+rom[m-n_factors] + 2*(m - n);
+	    if (!(co < 0 || co >= dims[0] * dims[1] * (n_factors*2) *2)) {
+	      F_V[co] = r3[2*(m-n)];
+	      F_V[co+1] = r3[2*(m-n)+1];
+	    }
+	  }
+	}
+        #endif
+
 	//luckily, # factors is guarunteed to be divisible by 4. So no worry about edge cases!
     }
     y=0;
@@ -386,8 +487,11 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   i32 origin;
 
   f32 tmp[2];
-
+  #ifdef __AVX__
   __m256 r1,r2;
+  #elif __SSE__
+  __m128 r1,r2;
+  #endif
   /* Compute variable to factor messages */
   max_marg_diff=0;
   y=start[1];
@@ -402,13 +506,23 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
       _compute_unary((f32*)tmp,(f32*)&base,unary,n_chan);
       //tmp[0]=-(((f32*)&base)[0]*unary[0] + ((f32*)&base)[1]*unary[1]);
       //tmp[1]=-(((f32*)&base)[0]*unary[2] + ((f32*)&base)[1]*unary[3]);
+      #ifdef __AVX__
       r1=(__m256)_mm256_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
-      //Warning: possible segfault
-	
+      #elif __SSE__
+      r1=(__m128)_mm_set1_pd(*((f64*)tmp)); //set all elements in vector this thi
+      #endif
+
+      #ifdef __AVX__
       for (n=0;n<n_factors*2;n+=4) { //Set baseline, since we know that unary is added to each V_F
 	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
       }
-      
+      #elif __SSE__
+      for (n=0;n<n_factors*2;n+=2) { //Set baseline, since we know that unary is added to each V_F
+	_mm_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)] ,r1);
+      }
+      #endif
+
+      #ifdef __AVX__
       for (i=0;i<n_factors*2;i++) {
 	base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
 	r1=(__m256)_mm256_set1_pd(base);
@@ -424,6 +538,24 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
 	r2=_mm256_sub_ps(r2,r1);
 	_mm256_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
       }
+      #elif __SSE__
+      for (i=0;i<n_factors*2;i++) {
+	base=*((f64*)(&F_V[COORD3(x,y,i,dims[0],dims[1],2*n_factors,2)]));
+	r1=(__m128)_mm_set1_pd(base);
+	for (n=0;n<n_factors*2;n+=2) {
+	  r2=(__m128)_mm_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	  r2=_mm_add_ps(r2,r1);
+	  _mm_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
+	}
+      }
+      for (n=0;n<n_factors*2;n+=2) { //correct double counting
+	r1=(__m128)_mm_load_ps(&F_V[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	r2=(__m128)_mm_load_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)]);
+	r2=_mm_sub_ps(r2,r1);
+	_mm_store_ps(&V_F[COORD3(x,y,n,dims[0],dims[1],2*n_factors,2)],r2);
+      }
+      #endif
+
 
       /*
       //TODO: normalize
@@ -479,19 +611,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   return NULL;
 }
 
-#else
 
-i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
-  return NULL;
-}
-static void * _loopyCPU__FtoV(loopycpu_t *l_args){
-  return NULL;
-}
-static void* _loopyCPU__VtoF(loopycpu_t *l_args){
-  return NULL;
-}
-
-#endif
 
 void *_loopy_label(loopycpu_t *l_args) {
   loopy_params_t * lpar = l_args->lpar;
@@ -502,7 +622,7 @@ void *_loopy_label(loopycpu_t *l_args) {
   i32 * stop = l_args->stop;
   i32 x,y;
   i32 origin;
-  printf("label start %d %d %d %d\n", start[0], start[1], stop[0], stop[1]);
+
   y=start[1];
   for (x=start[0];x<dims[0];x++) {
     for (;y<dims[1];y++) {
@@ -511,6 +631,7 @@ void *_loopy_label(loopycpu_t *l_args) {
       assert(origin >= 0 && origin + 1 < dims[0]*dims[1]);
       if (mu[origin] > mu[origin+1]) {
 	ret[COORD2(x,y,dims[0],dims[1],1)]=0;
+
       }
       else{
 	ret[COORD2(x,y,dims[0],dims[1],1)]=1;
