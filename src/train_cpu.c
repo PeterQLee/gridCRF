@@ -35,6 +35,7 @@ static void RMSprop_swap_vstore(rmsprop_t *rmsp, i32 index, i32 n_params) {
   rmsp->vstore[1] = rmsp->vstore_agg[index*2+1];
 }
 
+#ifdef __AVX__
 static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
   //TODO: make it so vstore is unique for each example
   f32 *v = rmsp->vstore[rmsp->current_offset];
@@ -85,7 +86,12 @@ static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors
   }
   
 }
+#else
+static void RMSprop_update(rmsprop_t *rmsp, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary) {
+}
+#endif
 
+#ifdef __AVX__
 void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   /*TODO: 
     Find out if we can avoid doing multiple loopy BPs by reusing the energies from the last iteration
@@ -288,10 +294,6 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	  for (k=0;k<n_factors*4*2+n_unary;k++){
 	    targs[0].V_change[k]+=lr*targs[h].V_change[k];
 	  }
-	  /* targs[0].V_change[n_factors*4*2]+=targs[h].V_change[n_factors*4*2]; */
-	  /* targs[0].V_change[n_factors*4*2+1]+=targs[h].V_change[n_factors*4*2+1]; */
-	  /* targs[0].V_change[n_factors*4*2+2]+=targs[h].V_change[n_factors*4*2+2]; */
-	  /* targs[0].V_change[n_factors*4*2+3]+=targs[h].V_change[n_factors*4*2+3]; */
 	  totL+=targs[h].L/n_threads;
 	}
 	RMSprop_swap_vstore((rmsprop_t*) update_data, j, 4*2*n_factors+n_unary);
@@ -323,20 +325,6 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 	    converged = 0;
 	  }
 	}
-	/*unary[0]+=lr*targs[h].V_change[n_factors*4*2];
-	unary[1]+=lr*targs[h].V_change[n_factors*4*2+1];
-	unary[2]+=lr*targs[h].V_change[n_factors*4*2+2];
-	unary[3]+=lr*targs[h].V_change[n_factors*4*2+3];*/
-	
-	/* if (fabs(lr*targs[h].V_change[k+1])>stop_tol){ */
-	/*   converged = 0; */
-	/* } */
-	/* if (fabs(lr*targs[h].V_change[k+2])>stop_tol){ */
-	/*   converged = 0; */
-	/* } */
-	/* if (fabs(lr*targs[h].V_change[k+3])>stop_tol){ */
-	/*   converged = 0; */
-	/* } */
 	
 	totL+=targs[h].L/n_threads;
       }
@@ -397,7 +385,10 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   free(threads);
 
 }
-
+#else
+void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
+}
+#endif
 
 
 

@@ -17,6 +17,7 @@ Copyright 2018 Peter Q. Lee
 #include "loopy.h"
 #include "loopy_gpu.h"
 
+#ifdef __AVX__
 i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
   #define VERBOSE 0
   //fix type
@@ -478,6 +479,19 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   return NULL;
 }
 
+#else
+
+i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObject *refimg){
+  return NULL;
+}
+static void * _loopyCPU__FtoV(loopycpu_t *l_args){
+  return NULL;
+}
+static void* _loopyCPU__VtoF(loopycpu_t *l_args){
+  return NULL;
+}
+
+#endif
 
 void *_loopy_label(loopycpu_t *l_args) {
   loopy_params_t * lpar = l_args->lpar;
