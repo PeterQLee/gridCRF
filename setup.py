@@ -25,7 +25,7 @@ def compile_gpu_and_avx():
 
     setup_kwargs={
         'extra_compile_args':['-msse','-msse4','-mavx','-mavx2','-fno-inline','-O0'],
-        'libraries': ['lbfgs','cudart', 'cudadevrt'],#, 'loopygpu'],
+        'libraries': ['cudart', 'cudadevrt'],#, 'loopygpu'],
         'library_dirs':['/usr/local/lib','/usr/local/cuda/lib64'],#, 'build/gpu/'],
         #'library_dirs':['/usr/local/lib','build/gpu'],
         'extra_objects':['build/gpu/loopy_gpu.o','build/gpu/train_gpu.o', 'build/gpu/gpu_link.o',
