@@ -40,6 +40,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   glpar.max_its = lpar->max_its;
   glpar.stop_thresh = lpar->stop_thresh;
   glpar.eval = lpar->eval;
+  glpar.reset_flag = 1;
 
   i32 n_factors=self->n_factors;
   i32 n_unary = self->n_unary;
@@ -164,6 +165,7 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   gdata.RE = RE;
   gdata.CE = CE;
   gdata.unary_w = unary_w;
+  
 
   gdata.V_F = V_F_l[j];
   gdata.F_V = F_V_l[j];
@@ -234,18 +236,21 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   i32 n_elem = dims[0] * dims[1] * (n_factors*2) *2;
   dim3 blockGrid(n_elem/128 + 1);
   dim3 threadGrid(128);
-  gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(F_V, 0.0, n_elem);
-  gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(V_F, 0.0, n_elem);
   
+  if (lpar->reset_flag) {//reset data if the flag is set.
+    gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(F_V, 0.0, n_elem);
+    gpu_fill_value<<<blockGrid, threadGrid,0, stream[(curstream++)%n_streams]>>>(V_F, 0.0, n_elem);
+  }
   /* Allocate coordinate system*/
 
   f32 *mu = gdata->mu;
   n_elem = dims[0] * dims[1] *2;
   dim3 blockGrid1(n_elem/128 + 1);
   dim3 threadGrid1(128);
-  
-  gpu_fill_value<<<blockGrid1, threadGrid1, 0, stream[(curstream++)%n_streams]>>>(mu, BIG, n_elem);
 
+  if (lpar->reset_flag) { //reset data if the flag is set.
+    gpu_fill_value<<<blockGrid1, threadGrid1, 0, stream[(curstream++)%n_streams]>>>(mu, BIG, n_elem);
+  }
 
   f32 *RE= gdata->RE, *CE= gdata->CE;
   n_elem = n_factors*4;

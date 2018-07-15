@@ -171,6 +171,7 @@ static void _train( gridCRF_t * self, PyObject *X_list, PyObject *Y_list, train_
   lpar.eval=1;
   lpar.EY=NULL;
   lpar.n_threads=8;
+  lpar.reset_flag = tpt->reset_flag;
 
   //calculate initial gradient to get things going
   gradient_t gradargs;
@@ -234,11 +235,12 @@ static PyObject* fit (gridCRF_t * self, PyObject *args,PyObject *kwds){
   tpt.stop_tol =0.001f;
   tpt.error_func = 0;
   tpt.update_type = 0;
-  static char * kwlist[] = {"train","lab","epochs","alpha","gamma", "stop_tol", "error_type", "update_type",NULL};
+  tpt.reset_flag = 1;
+  static char * kwlist[] = {"train","lab","epochs","alpha","gamma", "stop_tol", "error_type", "update_type", "reset_flag",NULL};
   PyObject *train,*lab,*X,*Y,*f;
   Py_ssize_t n;
   i32 i;
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifffii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.gamma), &(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type) )) return NULL;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"OO|ifffiii",kwlist,&train,&lab,&(tpt.epochs),&(tpt.alpha), &(tpt.gamma), &(tpt.stop_tol), &(tpt.error_func), &(tpt.update_type), &(tpt.reset_flag) )) return NULL;
 
   
   if (tpt.epochs < 0 ) {
@@ -309,6 +311,7 @@ static PyObject *predict(gridCRF_t* self, PyObject *args, PyObject *kwds){//PyAr
   lpar.max_its=100;
   lpar.eval=1;
   lpar.n_threads=8;
+  lpar.reset_flag = 1;
 
 
   static char * kwlist []= {"X","stop_thresh","max_its","n_threads" ,NULL};

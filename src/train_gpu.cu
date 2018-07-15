@@ -31,6 +31,8 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   lpar.max_its = args->lpar->max_its;
   lpar.stop_thresh = args->lpar->stop_thresh;
   lpar.eval = args->lpar->eval;
+  lpar.reset_flag = args->lpar->reset_flag;
+    
 
   i32 n_factors=args->n_factors;
   i32 n_unary = args->n_unary;
@@ -263,6 +265,9 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   gdata.CE = CE;
   gdata.unary_w = unary_w;
   
+  i32 perm_reset_flag = args->lpar->reset_flag;
+  lpar.reset_flag = 1;
+  
   g_args.gdata = &gdata;
   lpar.gdata = &gdata;
 
@@ -303,6 +308,9 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
       loopyGPU(self, (PyArrayObject*)PyList_GetItem(X_list,inds[j]), &lpar, NULL);
       gpu_calculate_gradient(&g_args);
     }
+    /* Set the reset flag to the permenant given one */
+    lpar.reset_flag = perm_reset_flag;
+      
     /* Increment sgd counters */
     switch(args->update_type){
     case RMSPROP:

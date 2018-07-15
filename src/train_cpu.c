@@ -220,7 +220,8 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
   break;
   }
 
-
+  i32 perm_resetflag = args->lpar->reset_flag;
+  args->lpar->reset_flag = 1;
   for (i=0;i<epochs && !converged;i++) {
     converged = 1;
     shuffle_inds(inds, n_samples);
@@ -346,6 +347,7 @@ void grad_descent(gradient_t *args,i64 epochs,i64 n_threads) {
 
     }
     ((rmsprop_t*)update_data)->current_offset= (((rmsprop_t*)update_data)->current_offset ^ 1);
+    args->lpar->reset_flag = perm_resetflag;
     //TODO: check tolerances on each  data.
     // also change rmsprop to save gradients for each data sample
   }

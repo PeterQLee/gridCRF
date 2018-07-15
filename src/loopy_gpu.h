@@ -35,6 +35,7 @@ typedef struct{
   f32 stop_thresh;
   i32 eval;
   gpu_loopy_data *gdata;
+  i32 reset_flag;
 }gpu_loopy_params_t;
 
 

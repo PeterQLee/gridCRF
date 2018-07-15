@@ -45,18 +45,23 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   f32 * V_F = (f32 *) _mm_malloc( dims[0] * dims[1] * (n_factors*2) *2* sizeof(f32),32);
   i32 *start = malloc(sizeof(i32)*n_threads*2);
   i32 *stop = malloc(sizeof(i32)*n_threads*2);
-  
-  for (i=0;i<dims[0] * dims[1] * (n_factors*2) *2; i++){
-    F_V[i]=0.0f;
-    V_F[i]=0.0f;
+
+  if (lpar->reset_flag) {
+    for (i=0;i<dims[0] * dims[1] * (n_factors*2) *2; i++){
+      F_V[i]=0.0f;
+      V_F[i]=0.0f;
+    }
   }
 
   f32 * marginals= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
   //f32 * mu= (f32* ) _mm_malloc(dims[0]*dims[1]*2*sizeof(f32),32);
   f32 *mu = lpar->mu;
-  for (i=0;i<dims[0]*dims[1]*2;i+=1) {
-    mu[i]=BIG;
-    marginals[i]=0.0f;
+
+  if (lpar->reset_flag) {
+    for (i=0;i<dims[0]*dims[1]*2;i+=1) {
+      mu[i]=BIG;
+      marginals[i]=0.0f;
+    }
   }
   
 

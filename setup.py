@@ -2,7 +2,7 @@
 from distutils.core import setup, Extension
 import numpy as np
 import os
-
+os.makedirs('build/gpu', exist_ok=True)
 mode = 'gpu'
 if mode == 'gpu':
     setup_kwargs={

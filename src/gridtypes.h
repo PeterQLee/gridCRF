@@ -59,6 +59,7 @@ typedef struct{
   i32 eval;
   i32 *EY;
   i32 n_threads;
+  i32 reset_flag;
 }loopy_params_t;
 
 
@@ -72,7 +73,9 @@ typedef struct{
   f32 stop_tol;
   i32 error_func; //0 = entropy, 1 = dice
   i32 update_type;
-}train_params_t;
+  i32 reset_flag;
+}
+  train_params_t;
 
 typedef  enum {ENTROPY,
 	       DICE

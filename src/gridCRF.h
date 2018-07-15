@@ -77,7 +77,12 @@ static const char fit_docstr[] =\
   "- update_type = 0: int\n"\
   "    The method for updating parameters. Options currently include:\n"\
   "    0 = Stochastic gradient descent.\n"\
-  "    1 = RMSprop\n\n";
+  "    1 = RMSprop\n\n"\
+  "- reset_flag = 1: int\n"\
+  "    Experimental flag for whether to reset messages between during loopyBP runs\n"\
+  "    0 = don't reset between training iterations\n"\
+  "    1 = reset between training iterations\n\n";
+  
 
 static const char predict_docstr[] =	\
   "Predicts given the trained model\n"
