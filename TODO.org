@@ -247,8 +247,8 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 
 * Ensure that input is C aligned memory.
 
-
-* Dice error training
+  
+* DONE Dice error training
 
 ** DONE allocate error data for dice in both cpu and gpu
 
@@ -262,4 +262,17 @@ Time(%)      Time     Calls       Avg       Min       Max  Name
 * TODO Fix numpy owned 
 * TODO universalize linalg operations
 * DONE Fix discrepency with rmsprop, dice cpu due to unary change.
-* TODO Try approximation analysis for speed up of looping.
+* DONE Try approximation analysis for speed up of looping.
+** Doesn't do much, doesn't hurt either though
+
+
+* v0.5 
+** TODO Add multi-class support 
+*** AVX strategy
+Make an array of __m256 for each class.
+
+
+
+* v0.6
+
+** TODO Add mean field propagation1
