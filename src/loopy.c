@@ -27,8 +27,8 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   //Need to initialize all messages
 
   npy_intp * dims= PyArray_DIMS(X);
-  i64 n_factors=self->n_factors;
-  i64 max_it=lpar->max_its,it;
+  i32 n_factors=self->n_factors, nc = self->n_classes;
+  i32 max_it=lpar->max_its,it;
   f32 max_marg_diff=0.0f;
   i32 n_threads = lpar->n_threads;
   i32 converged=0;
@@ -75,18 +75,18 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   for (j=1;j<=depth;j++ ) {
     for (i=0;i<j*4;i++) {
       if (i<j) {
-	com[n]= -j *dims[1] * n_factors*2*2 - i*n_factors*2*2;
-	rom[n]= +j *dims[1] * n_factors*2*2 + i*n_factors*2*2;
+	com[n]= -j *dims[1] * 2*n_factors*nc - i*2*n_factors*nc;
+	rom[n]= +j *dims[1] * 2*n_factors*nc + i*2*n_factors*nc;
 	co_pairs[n]=(om_pair){-j,-i};
       }
       else if (i>=j*3) {
-	com[n]= +j *dims[1] * n_factors*2*2 - (j-(i-j*3))*n_factors*2*2;
-	rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;
+	com[n]= +j *dims[1] * 2*n_factors*nc - (j-(i-j*3))*2*n_factors*nc;
+	rom[n]= -j *dims[1] * 2*n_factors*nc + (j-(i-j*3))*2*n_factors*nc;
 	co_pairs[n]=(om_pair){j,-(j-(i-j*3))};
       }
       else{
-	com[n]= (-2*j+i)*dims[1] * n_factors*2*2 - j*n_factors*2*2;
-	rom[n]= (2*j-i)*dims[1] * n_factors*2*2 + j*n_factors*2*2;
+	com[n]= (-2*j+i)*dims[1] * 2*n_factors*nc - j*2*n_factors*nc;
+	rom[n]= (2*j-i)*dims[1] * 2*n_factors*nc + j*2*n_factors*nc;
 	co_pairs[n]=(om_pair){-2*j+i,-j};
       }
       

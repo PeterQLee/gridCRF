@@ -42,7 +42,7 @@ typedef struct{
 typedef struct{
   PyObject_HEAD
   i32 n_outcomes;
-  i32 n_factors, n_unary, n_inp_channels;
+  i32 n_factors, n_unary, n_inp_channels, n_classes;
   i32 depth;
   PyArrayObject *V, *unary_pyarr;
   f32 *V_data;

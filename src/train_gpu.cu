@@ -26,6 +26,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   gridCRF_t *self = args->self;
   npy_intp *dims=args->dims;
   i32 depth = self->depth;
+  i32 n_factors=self->n_factors, nc = self->n_classes, n_chan = self->n_inp_channels;
 
   gpu_loopy_params_t lpar;
   lpar.max_its = args->lpar->max_its;
@@ -34,9 +35,8 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   lpar.reset_flag = args->lpar->reset_flag;
     
 
-  i32 n_factors=args->n_factors;
   i32 n_unary = args->n_unary;
-  i32 n_params = n_factors*4*2 + args->n_unary;
+  i32 n_params = 2*n_factors*nc*nc + args->n_unary;
 
   PyObject *X_list=args->X_list;
   PyObject *Y_list=args->Y_list;
@@ -52,6 +52,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 
   f32 **X_l =  (f32 **) malloc(sizeof(f32*) * n_samples);
   i32 **Y_l =  (i32 **) malloc(sizeof(i32*) * n_samples);
+  i32 **refimg_l =  (i32 **) malloc(sizeof(i32*) * n_samples);
 
   //cuda streams
   const i32 n_streams = 10;
@@ -66,10 +67,10 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   /* parameters */
   f32 * V_data;
   cudaMalloc(&V_data, sizeof(f32)*(n_params));//check this...
-  err=cudaMemcpyAsync(V_data, self->V_data, sizeof(f32)*(n_factors*8), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
+  err=cudaMemcpyAsync(V_data, self->V_data, sizeof(f32)*(n_factors*2*nc*nc), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
   assert(err==cudaSuccess);
   
-  f32 *unary_w = V_data + n_factors*8;//sizeof(f32)*n_factors*8;
+  f32 *unary_w = V_data + n_factors*2*nc*nc;//sizeof(f32)*n_factors*2*nc*nc;
   err=cudaMemcpyAsync(unary_w, self->unary, n_unary*sizeof(f32), cudaMemcpyHostToDevice, stream[(curstream++)%n_streams]);
   assert(err==cudaSuccess);
   
@@ -81,22 +82,27 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
     
     cudaMalloc(&EY_l[j],sizeof(i32)*dims[0]*dims[1]);
 
-    cudaMalloc(&X_l[j], sizeof(f32)*dims[0]*dims[1]*2);
-    cudaMalloc(&Y_l[j], sizeof(i32)*dims[0]*dims[1]*2);
+    cudaMalloc(&X_l[j], sizeof(f32)*dims[0]*dims[1]*n_chan);
+    cudaMalloc(&Y_l[j], sizeof(i32)*dims[0]*dims[1]*nc);
+    cudaMalloc(&refimg_l[j], sizeof(i32)*dims[0]*dims[1]);
     //Copy images to memory
     err=cudaMemcpyAsync(X_l[j],PyArray_DATA(((PyArrayObject*) PyList_GetItem(X_list,j))), \
-		    sizeof(f32)*dims[0]*dims[1]*2, cudaMemcpyHostToDevice,
+		    sizeof(f32)*dims[0]*dims[1]*n_chan, cudaMemcpyHostToDevice,
 		    stream[(curstream++)%n_streams]);
     assert(err==cudaSuccess);
+    i32 copstream = (curstream)%n_streams;
     err=cudaMemcpyAsync(Y_l[j], PyArray_DATA(((PyArrayObject*)PyList_GetItem(Y_list,j))), \
-		    sizeof(i32)*dims[0]*dims[1]*2, cudaMemcpyHostToDevice,\
+		    sizeof(i32)*dims[0]*dims[1]*nc, cudaMemcpyHostToDevice,\
 		    stream[(curstream++)%n_streams]);
     assert(err==cudaSuccess);
+    dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
+    dim3 threadGrid1(16,16,nc);
+    gpu_OrChannel<<<blockGrid1, threadGrid1, 0, stream[copstream]>>>(Y_l[j], refimg_l[j], dims[0], dims[1]);
   }
 
   f32 *V_change;
-  cudaMalloc(&V_change, sizeof(f32)*(n_factors*4*2+n_unary));
-  f32 *unary_change = V_change + n_factors*4*2;
+  cudaMalloc(&V_change, sizeof(f32)*(n_factors*nc*nc*2+n_unary));
+  f32 *unary_change = V_change + n_factors*nc*nc*2;
 
   i32 **com_l = (i32**) malloc(sizeof(i32*)*n_samples);
   i32 **rom_l = (i32**) malloc(sizeof(i32*)*n_samples);
@@ -114,18 +120,18 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
     for (j=1;j<=depth;j++ ) {
       for (i=0;i<j*4;i++) {
 	if (i<j) {
-	  _com[n]= -j *dims[1] * n_factors*2*2 - i*n_factors*2*2;
-	  _rom[n]= +j *dims[1] * n_factors*2*2 + i*n_factors*2*2;
+	  _com[n]= -j *dims[1] * 2*n_factors*nc - i*2*n_factors*nc;
+	  _rom[n]= +j *dims[1] * 2*n_factors*nc + i*2*n_factors*nc;
 	  _co_pairs[n]=(om_pair){-j,-i};
 	}
 	else if (i>=j*3) {
-	  _com[n]= +j *dims[1] * n_factors*2*2 - (j-(i-j*3))*n_factors*2*2;
-	  _rom[n]= -j *dims[1] * n_factors*2*2 + (j-(i-j*3))*n_factors*2*2;
+	  _com[n]= +j *dims[1] * 2*n_factors*nc - (j-(i-j*3))*2*n_factors*nc;
+	  _rom[n]= -j *dims[1] * 2*n_factors*nc + (j-(i-j*3))*2*n_factors*nc;
 	  _co_pairs[n]=(om_pair){j,-(j-(i-j*3))};
 	}
 	else{
-	  _com[n]= (-2*j+i)*dims[1] * n_factors*2*2 - j*n_factors*2*2;
-	  _rom[n]= (2*j-i)*dims[1] * n_factors*2*2 + j*n_factors*2*2;
+	  _com[n]= (-2*j+i)*dims[1] * 2*n_factors*nc - j*2*n_factors*nc;
+	  _rom[n]= (2*j-i)*dims[1] * 2*n_factors*nc + j*2*n_factors*nc;
 	  _co_pairs[n]=(om_pair){-2*j+i,-j};
 	}
       
@@ -151,20 +157,20 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   f32 ** unary_c_l = (f32**) malloc(sizeof(f32*) * n_samples);
   for (j=0;j<n_samples;j++){
     dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
-    cudaMalloc(&unary_c_l[j], dims[0]*dims[1]*2*sizeof(f32));
+    cudaMalloc(&unary_c_l[j], dims[0]*dims[1]*nc*sizeof(f32));
   }
 
   f32 *RE, *CE;
-  cudaMalloc(&RE, sizeof(f32) * 2* n_factors *2);
-  cudaMalloc(&CE, sizeof(f32) * 2* n_factors *2);
+  cudaMalloc(&RE, sizeof(f32) * 2* n_factors *nc);
+  cudaMalloc(&CE, sizeof(f32) * 2* n_factors *nc);
 
   f32 **V_F_l = (f32**) malloc(sizeof(f32*) * n_samples);
   f32 **F_V_l = (f32**) malloc(sizeof(f32*) * n_samples);
 
   for (j=0;j<n_samples;j++){
     dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
-    cudaMalloc(&V_F_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
-    cudaMalloc(&F_V_l[j], sizeof(f32)*dims[0]*dims[1]*n_factors*4);
+    cudaMalloc(&V_F_l[j], sizeof(f32)*dims[0]*dims[1]*2*n_factors*nc);
+    cudaMalloc(&F_V_l[j], sizeof(f32)*dims[0]*dims[1]*2*n_factors*nc);
   }
 
 
@@ -210,14 +216,14 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   case DICE:
     gerror_data = (gpu_dice_error_data_t*) malloc(sizeof(gpu_dice_error_data_t)*n_samples);
     f32 *sum, *prod;
-    err = cudaMalloc(&prod,sizeof(f32)*4);
+    err = cudaMalloc(&prod,sizeof(f32)*nc*nc);
     assert(err==cudaSuccess);
-    sum = prod + 2;
+    sum = prod + nc;
     for (j=0;j<n_samples;j++) {
       dims=PyArray_DIMS((PyArrayObject*)PyList_GetItem(X_list,j));
       gerror_data[j].sum = sum;
       gerror_data[j].prod = prod;
-      err=cudaMalloc(&gerror_data[j].prob, sizeof(f32)*dims[0]*dims[1]*2);
+      err=cudaMalloc(&gerror_data[j].prob, sizeof(f32)*dims[0]*dims[1]*nc);
       assert(err==cudaSuccess);
       error_data[j] = (void*) gerror_data;
     }
@@ -232,23 +238,25 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   case RMSPROP:    
     update_data = malloc(sizeof(gpu_rmsprop_t));
     rmstmp = (gpu_rmsprop_t*) update_data;
-    rmstmp->vstore = (f32**) malloc(sizeof(f32*)*2);
-    rmstmp->vstore_agg = (f32**) malloc(sizeof(f32*)*n_samples*2);
+    rmstmp->vstore = (f32**) malloc(sizeof(f32*)*nc);
+    rmstmp->vstore_agg = (f32**) malloc(sizeof(f32*)*n_samples*nc);
     rmstmp->gamma = args->gamma;
     rmstmp->alpha = args->alpha;
     rmstmp->current_offset = 0;
     rmstmp->stop_tol = args->stop_tol;
     rmstmp->converged = g_args.converged; //TODO: change this to actual
     for (i=0;i<n_samples;i++){
-      err=cudaMalloc(&(rmstmp->vstore_agg[i*2]),sizeof(f32)*(n_params));
-      assert(err==cudaSuccess);
-      err=cudaMalloc(&(rmstmp->vstore_agg[i*2+1]),sizeof(f32)*(n_params));
-      assert(err==cudaSuccess);
+      for (j=0;j<nc;j++) {
+	err=cudaMalloc(&(rmstmp->vstore_agg[i*nc + j]),sizeof(f32)*(n_params));
+	assert(err==cudaSuccess);
+	//err=cudaMalloc(&(rmstmp->vstore_agg[i*nc+1]),sizeof(f32)*(n_params));
+	//assert(err==cudaSuccess);
       
-      dim3 blockGrid(n_params/128 + 1);
-      dim3 threadGrid(128);
-      gpu_fill_value<<<blockGrid, threadGrid, 0 ,stream[(curstream++)%n_streams]>>>(rmstmp->vstore_agg[i*2], 0.01f, n_params);
-      gpu_fill_value<<<blockGrid, threadGrid, 0 ,stream[(curstream++)%n_streams]>>>(rmstmp->vstore_agg[i*2+1], 0.01f, n_params);
+	dim3 blockGrid(n_params/128 + 1);
+	dim3 threadGrid(128);
+	gpu_fill_value<<<blockGrid, threadGrid, 0 ,stream[(curstream++)%n_streams]>>>(rmstmp->vstore_agg[i*nc + j], 0.01f, n_params);
+	//gpu_fill_value<<<blockGrid, threadGrid, 0 ,stream[(curstream++)%n_streams]>>>(rmstmp->vstore_agg[i*2+1], 0.01f, n_params);
+      }
       
     }
     break;
@@ -301,6 +309,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 
       g_args.dev_X = X_l[inds[j]];
       g_args.dev_Y = Y_l[inds[j]];
+      g_args.dev_refimg = refimg_l[inds[j]];
       g_args.dims= dims;
       g_args.error_data = error_data[inds[j]];
       g_args.sample_index = inds[j];
@@ -325,7 +334,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   
   // copy V_data back to numpy space...
   // also copy unary data back to numpy space3
-  cudaMemcpy(self->V_data, V_data,  sizeof(f32)*(n_factors*8), cudaMemcpyDeviceToHost);
+  cudaMemcpy(self->V_data, V_data,  sizeof(f32)*(n_factors*2*nc*nc), cudaMemcpyDeviceToHost);
   cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(n_unary), cudaMemcpyDeviceToHost);
 
   //Time to clean up everything
@@ -348,8 +357,9 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   case RMSPROP:
     rmstmp = (gpu_rmsprop_t*) update_data;
     for (i=0;i<n_samples;i++) {
-      cudaFree(rmstmp->vstore_agg[i*2]);
-      cudaFree(rmstmp->vstore_agg[i*2+1]);
+      for (j=0;j<nc;j++) {
+	cudaFree(rmstmp->vstore_agg[i*nc+j]);
+      }
     }
     free(rmstmp->vstore_agg);
     free(rmstmp->vstore);
@@ -391,6 +401,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
 static void gpu_calculate_gradient(gpu_gradient_t *args) {
   f32 *X = args->dev_X;
   i32 *Y = args->dev_Y;
+  i32 *refimg = args->dev_refimg;
   i32 *ainc = args->dev_ainc, *binc = args->dev_binc;
   f32 *V_change = args->dev_V_change;
   f32 *unary_change = args->dev_unary_change;
@@ -399,7 +410,7 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   
   f32 *L = args->dev_L;
   npy_intp *dims = args->dims;
-  i32 n_factors = args->self->n_factors;
+  i32 n_factors=args->self->n_factors, nc = args->self->n_classes;
   i32 n_unary = args->self->n_unary;
   i32 n_chan = args->self->n_inp_channels;
 
@@ -411,43 +422,43 @@ static void gpu_calculate_gradient(gpu_gradient_t *args) {
   cudaStreamCreate(&stream);
   
   i32 n_elem;
-  i32 n_params = n_factors*4*2+ n_unary;
+  i32 n_params = 2*n_factors*nc*nc+ n_unary;
   
-  n_elem=(n_factors*4*2+n_unary);
+  n_elem=(2*n_factors*nc*nc+n_unary);
   dim3 blockGrid(n_elem/128 + 1);
   dim3 threadGrid(128);
   gpu_fill_value<<<blockGrid, threadGrid,0,stream>>>(V_change,0.0, n_elem);
   //note, this also fills unary_change
   f32 alpha = args->alpha;
   dim3 dimGrid(dims[0],dims[1]);
-  dim3 factorgrid(2*n_factors,2);
-  dim3 singGrid(2);
+  dim3 factorgrid(2*n_factors,nc);
+  dim3 singGrid(nc);
   //gpu_loopy_V_F__computeunary<<<factorgrid, singGrid,0 ,stream >>>(X, unary_w, unary_c);
   gpu_loopy_V_F__computeunary<<<dimGrid, singGrid,0 ,stream >>>(X, unary_w, unary_c, n_chan);
   dim3 blockGrid1(dims[0]/16 + 1, dims[1]/16 + 1);
-  dim3 threadGrid1(16,16,2);
+  dim3 threadGrid1(16,16,nc);
 
   switch (args->error_func){
   case ENTROPY:
 
-    gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream >>> (unary_c, EY, X, Y, V, V_change, unary_change, ainc, binc, 1.0/(dims[0]*dims[1]), (i32) dims[0], (i32) dims[1], n_factors);
+    gpu_entropy_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*nc, stream >>> (unary_c, EY, X, Y, refimg, V, V_change, unary_change, ainc, binc, 1.0/(dims[0]*dims[1]), (i32) dims[0], (i32) dims[1], n_factors, n_chan);
     
 
     break;
   case DICE:
     gpu_dice_error_data_t *error_data = (gpu_dice_error_data_t *) args->error_data;
     
-    gpu_dice_prob<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*2, stream>>>(unary_c, EY, V, Y, error_data->prob, ainc, binc, (i32) dims[0], (i32) dims[1], n_factors);
-    gpu_fill_value<<<blockGrid, threadGrid >>>(error_data->prod, 0.0, 4);
-    gpu_dice_intermediate_summation<<<blockGrid1, threadGrid1, 0, stream>>>(error_data->prob, Y, error_data->prod, error_data->sum, (i32) dims[0], (i32) dims[1]);
+    gpu_dice_prob<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*nc, stream>>>(unary_c, EY, V, Y, refimg, error_data->prob, ainc, binc, (i32) dims[0], (i32) dims[1], n_factors);
+    gpu_fill_value<<<blockGrid, threadGrid >>>(error_data->prod, 0.0, nc*nc);
+    gpu_dice_intermediate_summation<<<blockGrid1, threadGrid1, 0, stream>>>(error_data->prob, Y, refimg, error_data->prod, error_data->sum, (i32) dims[0], (i32) dims[1]);
     
-    gpu_dice_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*4, stream>>>(error_data->prob, EY, error_data->prod, error_data->sum, X, Y, V_change, unary_change, ainc, binc, 1.0/(dims[0]*dims[1]), (i32) dims[0], (i32) dims[1], n_factors);
+    gpu_dice_partial<<<blockGrid1, threadGrid1, sizeof(f32)*16*16*nc*nc, stream>>>(error_data->prob, EY, error_data->prod, error_data->sum, X, Y, refimg, V_change, unary_change, ainc, binc, 1.0/(dims[0]*dims[1]), (i32) dims[0], (i32) dims[1], n_factors);
     break;
   }
 
 
   dim3 blockGrid2(1);
-  dim3 threadGrid2(n_factors*8 + n_unary);
+  dim3 threadGrid2(n_factors*2*nc*nc + n_unary);
   gpu_rmsprop_t *rmstmp;
   switch(args->update_type) {
   case RMSPROP:
@@ -475,7 +486,7 @@ void g_RMSprop_swap_vstore(gpu_rmsprop_t *rmsp, i32 index) {
 
 
 
-__global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 scale, i32 limx, i32 limy, i32 n_factors) {
+__global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, i32 *refimg, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 scale, i32 limx, i32 limy, i32 n_factors, i32 n_chan) {
 
   //last pitch idea. Forget cond until the very end
   
@@ -485,11 +496,12 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
   //TODO: check page 83, mentions that V_change and unary need to be properly aligned.
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 nc = blockDim.z;
   i32 c= threadIdx.z;
   i32 i;
   i32 l;
   i32 co = ((x)*limy + y);
-  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  i32 cond= (x >= limx || y >= limy) || (refimg[co]==0); //TODO: expand to others.
   extern __shared__ char array[];
   //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
 
@@ -498,60 +510,69 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
   __syncthreads();
   
   if (!cond) {
-    sum = -unary_c[2*co+c];
+    sum = -unary_c[nc*co+c];
     
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
       l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
-      sum += V[i*4 + (l)*2 + c];
+      sum += V[i*nc*nc + (l)*nc + c];
+      //sum += V[i*4 + (l)*2 + c];
     }
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
     
       l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
-      sum += V[n_factors*4 + i*4 + (l)*2 + c];
+      sum += V[n_factors*nc*nc + i*nc*nc + (l)*nc + c];
+      //sum += V[n_factors*4 + i*4 + (l)*2 + c];      //
     }
     
     //put sum into shared memory
-    shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
+    shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc +c] = sum;
   }
   __syncthreads();
   if(!cond) {
-    
-    if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
-      max = sum;
-    }
-    else{
-      max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+    max = sum;
+    for (i=0;i<nc;i++) {
+      if (max < shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+i]){
+	max = sum;
+      }	
     }
   }
   __syncthreads();
   if (!cond) {  
-    s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
+    s1 = expf(-shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c]-max);
 
-    shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+    shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] = s1;
   }
   __syncthreads();
   // Each thread handles the specific class
   //Softmax
-  if (!cond) {
-    l = Y[co*2+c];
-    s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
+  if (!cond) { //TODO: fix for multiclass
+    l = Y[co*nc+c];
+    f32 total = 0.0;
+    //TODO: try softmax with AtomicAdd instead of individually adding each one
 
+    for (i=0;i<nc;i++) {
+      total+=shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc + i];
+    }
+    //s1= shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] / (shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc]+shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+1]);
     
+    //TODO:marker
+    s1 = shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] / total;
     change = -scale*(l-s1);
-    //printf("%d %d %d %f %d %f\n", threadIdx.x, threadIdx.y, c, s1, l, change);
 
 
-    atomicAdd(&unary_change[c*2], change*X[co*2]);
-    atomicAdd(&unary_change[c*2+1], change*X[co*2+1]);
+    for (i=0;i<n_chan;i++){
+      atomicAdd(&unary_change[c*n_chan+i], change*X[co*n_chan+i]);
+    }
+    //atomicAdd(&unary_change[c*n_chan+1], change*X[co*n_chan+1]);
     
     //possible optimization
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
       l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
     //Atomic add
-      atomicAdd(&V_change[i*4 + 2*l +c], change);
+      atomicAdd(&V_change[i*nc*nc + nc*l +c], change);
     }
     
     for (i=0;i<n_factors;i++) {
@@ -559,20 +580,22 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, f32 *
       
       l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
       //Atomic add
-      atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+      atomicAdd(&V_change[n_factors*nc*nc + i*nc*nc + nc*l +c], change);
     }
   }
 }
 
-__global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors) {
+__global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refimg, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors) {
   // Calculates probability for dice error
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
+  i32 nc = blockDim.z;
   i32 i;
   i32 l;
   i32 co = ((x)*limy + y);
-  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  i32 cond= (x >= limx || y >= limy) || (refimg[co]==0); //TODO: fix
+  f32 total=0.0f;
   extern __shared__ char array[];
   //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
 
@@ -581,56 +604,71 @@ __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, f32 *p, i3
   __syncthreads();
   
   if (!cond) {
-    sum = -unary_c[2*co+c];
+    sum = -unary_c[nc*co+c];
     
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
       l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
-      sum += V[i*4 + (l)*2 + c];
+      sum += V[i*nc*nc + (l)*nc + c];
     }
     for (i=0;i<n_factors;i++) {
       if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
     
       l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
-      sum += V[n_factors*4 + i*4 + (l)*2 + c];
+      sum += V[n_factors*nc*nc + i*nc*nc + (l)*nc + c];
     }
     
     //put sum into shared memory
-    shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
+    shared_sum[threadIdx.x*16*nc + threadIdx.y*nc +c] = sum;
   }
   __syncthreads();
+  /*
   if(!cond) {
     
-    if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
+    if (sum < shared_sum[threadIdx.x*16*nc + threadIdx.y*2+c^1]){
       max = sum;
     }
     else{
       max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
     }
   }
+  */
+
+  if(!cond) {
+    max = sum;
+    for (i=0;i<nc;i++) {
+      if (max < shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+i]){
+	max = sum;
+      }	
+    }
+  }
   __syncthreads();
   if (!cond) {  
-    s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
-
-    shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+    s1 = expf(-shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c]-max);
+    shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] = s1;
   }
   __syncthreads();
   // Each thread handles the specific class
   //Softmax
   if (!cond) {
-    s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
-    p[2*co+c] = s1;
+    for (i=0;i<nc;i++) {
+      total+=shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc + i];
+    }
+    //s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]);
+    s1 = shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] / total;
+    p[nc*co+c] = s1;
   }
 }
 
-__global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, f32 *prod, f32 *sum, i32 limx, i32 limy) {
+__global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, i32 *refimg, f32 *prod, f32 *sum, i32 limx, i32 limy) {
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
   i32 co = ((x)*limy + y);
-  i32 l = Y[co*2+c];
-  f32 prob = p[co*2+c];
-  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  i32 nc = blockIdx.z;
+  i32 l = Y[co*nc+c];
+  f32 prob = p[co*nc+c];
+  i32 cond= (x >= limx || y >= limy) || (refimg[co]==0);
 
   if (!cond) {
     if (l) {
@@ -640,40 +678,41 @@ __global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, f32 *prod, f32 *
   }
 }
 
-__global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i32 *Y, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 scale, i32 limx, i32 limy, i32 n_factors) {
+__global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i32 *Y, i32 *refimg, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 scale, i32 limx, i32 limy, i32 n_factors) {
   extern __shared__ char array [];
-
+  i32 nc = blockIdx.z;
   f32 *shared_dL_dp = (f32*) array;
-  f32 *shared_prob = &shared_dL_dp[16*16*2];
+  f32 *shared_prob = &shared_dL_dp[blockDim.x*blockDim.y*nc];
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
+
   i32 i;
   i32 l;
   i32 co = ((x)*limy + y);
   
 
 
-  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  i32 cond= (x >= limx || y >= limy) || (refimg[co] == 0);
   
   if (!cond) {
-    i32 lc = Y[co*2+c];
-    f32 prob = p[co*2+c];
+    i32 lc = Y[co*nc+c];
+    f32 prob = p[co*nc+c];
     f32 prodc = prod[c];
     f32 sumc = sum[c];
-    shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c] = prob;
+    shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c] = prob;
 
   /* Calculate partial ps */
 
     f32 dL_dpc = (-2* lc * sumc  + 4 * prob * prodc)/ (sumc*sumc);
-    shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c] = dL_dpc;
+    shared_dL_dp[threadIdx.x * blockDim.y * nc + threadIdx.y*nc +c] = dL_dpc;
   }
   __syncthreads();
   if (!cond) {
     /* calculate partial Vs*/
     f32 dp_dc, dp_dnc;
-    dp_dc = shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c] - shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c]*shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c];
-    dp_dnc = -shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c]*shared_prob[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+    dp_dc = shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c] - shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c]*shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c];
+    dp_dnc = -shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c]*shared_prob[threadIdx.x*16*nc + threadIdx.y*nc+c^1];
 
   
     f32 change = scale* (dp_dc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c] + dp_dnc * shared_dL_dp[threadIdx.x * 16 * 2 + threadIdx.y*2 +c^1]);
@@ -689,7 +728,7 @@ __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i
       if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
       l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
       //Atomic add
-      atomicAdd(&V_change[i*4 + 2*l +c], change);
+      atomicAdd(&V_change[i*nc*nc + 2*l +c], change);
     }
   
     for (i=0;i<n_factors;i++) {
@@ -697,7 +736,7 @@ __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i
       
       l= EY[COORD2(x+ainc[n_factors+i],y+binc[n_factors+i],limx,limy,1)];
       //Atomic add
-      atomicAdd(&V_change[n_factors*4 + i*4 + 2*l +c], change);
+      atomicAdd(&V_change[n_factors*nc*nc + i*nc*nc + nc*l +c], change);
     }
   }
 }
@@ -724,3 +763,23 @@ __global__ void gpu_RMSprop_update(f32 *v_curr, f32 *v_old, i32 *converged, f32 
   
 }
 //TODO: add stop_tol to gradient_args
+
+
+/*4
+  Iterates over a channel and returns a refimg mask,
+ */
+__global__ void gpu_OrChannel(i32 *inbuffer, i32 *outbuffer, i32 limx, i32 limy) {
+  i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c = 0;
+  i32 nc = blockDim.z;
+  i32 co = x*limy + y;
+  i32 cond=(x >=limx || y>=limy);
+  i32 result = 0;
+  if (!cond) {
+    for (c=0;c<nc;c++) {
+      result |= inbuffer[co*nc+c];
+    }
+    outbuffer[co] = result;
+  }
+}

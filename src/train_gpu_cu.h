@@ -34,15 +34,15 @@ static void gpu_calculate_gradient(gpu_gradient_t *args);
 void g_RMSprop_swap_vstore(gpu_rmsprop_t *rmsp, i32 index);
   
 
-__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors);
+__global__ void gpu_entropy_partial(f32 *mu, i32 *EY, f32 *X, i32 *Y, i32 *refimg, f32 *V, f32 *V_change, f32* unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors, i32 n_chan);
 
 
 
-__global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors);
+__global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refimg, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors);
 
-__global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, f32 *prod, f32 *sum, i32 limx, i32 limy);
+__global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, i32 *refimg, f32 *prod, f32 *sum, i32 limx, i32 limy);
 
-__global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i32 *Y, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors);
+__global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i32 *Y, i32 *refimg, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 alpha, i32 limx, i32 limy, i32 n_factors);
 
 
 
@@ -50,4 +50,5 @@ __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i
 __global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr, i32 *converged, f32 stop_tol);
 __global__ void gpu_RMSprop_update(f32 *v_curr, f32 *v_old, i32 *converged, f32 gamma, f32 alpha, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary, f32 stop_tol);
 
+__global__ void gpu_OrChannel(i32 *inbuffer, i32 *outbuffer, i32 limx, i32 limy);
 #endif

@@ -47,16 +47,18 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
   self->depth=0;
 
   self->n_inp_channels = 2;
-  self->gpuflag=0;
-  npy_int depth_=0;
-  static char * kwlist []= {"depth", "n_inp_channels", "gpuflag" ,NULL};
+  self->n_classes = 2;
+  self->gpuflag = 0;
+  npy_int depth_ = 0;
+  static char * kwlist []= {"depth", "n_inp_channels", "n_classes", "gpuflag" ,NULL};
   
-  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|ii", kwlist, &depth_, &self->n_inp_channels, &(self->gpuflag))) return 1;
+  if (!PyArg_ParseTupleAndKeywords(args,kwds,"i|iii", kwlist, &depth_, &self->n_inp_channels, &self->n_classes, &(self->gpuflag))) return 1;
+  i32 nc = self->n_classes;
   if (self->n_unary%2!=0) {
     PyErr_SetString(PyExc_ValueError, "N channels must be a multiple of 2");
     return 1;
   }
-  self->n_unary = self->n_inp_channels * 2;
+  self->n_unary = self->n_inp_channels * nc;
   //depth_=1;
   depth=(i64)depth_;
   self->depth=depth;
@@ -66,20 +68,20 @@ static int gridCRF_init(gridCRF_t *self, PyObject *args, PyObject *kwds){
     n_factors= n_factors + i*4;
   }
   self->n_factors= n_factors;
-  self->V_data = _mm_malloc((n_factors*2*4 + self->n_unary) * sizeof(f32),64); //TODO: use aligned malloc
+  self->V_data = _mm_malloc((n_factors*2*nc*nc + self->n_unary) * sizeof(f32),64);
 
-  self->unary = &(self->V_data[n_factors*2*4]);
+  self->unary = &(self->V_data[n_factors*2*nc*nc]);
   for (i=0;i<self->n_unary;i++) {
     self->unary[i]=0.0f;
   }
-  for (i=0;i<n_factors*4*2;i++) {
+  for (i=0;i<n_factors*nc*nc*2;i++) {
     self->V_data[i]=0.0f; //temporary
   }
   
-  npy_intp dims[2]= {n_factors*2, 4};
+  npy_intp dims[2]= {n_factors*2, nc*nc};
   self->V=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims,NPY_FLOAT32,self->V_data);
   //PyArray_ENABLEFLAGS(self->V, NPY_OWNDATA);
-  npy_intp dims1[2]= {self->n_unary/2, self->n_unary/2};
+  npy_intp dims1[2]= {nc, self->n_inp_channels};
   self->unary_pyarr=(PyArrayObject *)PyArray_SimpleNewFromData(2,dims1,NPY_FLOAT32,self->unary);
   Py_INCREF(self->V);
   Py_INCREF(self->unary_pyarr);

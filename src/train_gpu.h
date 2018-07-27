@@ -30,6 +30,7 @@ typedef struct {
   f32 *dev_V_change, *dev_unary_change;
   f32 *dev_X;
   i32 *dev_Y;
+  i32 *dev_refimg;
   i32 *dev_ainc, *dev_binc;
   npy_intp * dims;
   i32 sample_index;

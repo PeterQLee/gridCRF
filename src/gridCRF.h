@@ -39,6 +39,8 @@ static const char mainobj_docstr[] = \
   "n_inp_channels: int\n"\
   "    The number of input channels in the CRF.\n"
   "    Must be divisible by two.\n\n"\
+  "n_classes: int\n"\
+  "    The number of classes for prediction.\n\n"\
   "gpuflag=0: int\n"\
   "    Flag for enabling the gpu:\n"\
   "    0 = CPU mode\n"\
