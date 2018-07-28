@@ -586,6 +586,7 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, i32 *
 }
 
 __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refimg, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors) {
+  
   // Calculates probability for dice error
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
@@ -622,17 +623,6 @@ __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refim
     shared_sum[threadIdx.x*16*nc + threadIdx.y*nc +c] = sum;
   }
   __syncthreads();
-  /*
-  if(!cond) {
-    
-    if (sum < shared_sum[threadIdx.x*16*nc + threadIdx.y*2+c^1]){
-      max = sum;
-    }
-    else{
-      max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
-    }
-  }
-  */
 
   if(!cond) {
     max = sum;
@@ -654,18 +644,19 @@ __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refim
     for (i=0;i<nc;i++) {
       total+=shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc + i];
     }
-    //s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]);
+   
     s1 = shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] / total;
     p[nc*co+c] = s1;
   }
 }
 
 __global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, i32 *refimg, f32 *prod, f32 *sum, i32 limx, i32 limy) {
+  
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
   i32 c= threadIdx.z;
   i32 co = ((x)*limy + y);
-  i32 nc = blockIdx.z;
+  i32 nc = blockDim.z;
   i32 l = Y[co*nc+c];
   f32 prob = p[co*nc+c];
   i32 cond= (x >= limx || y >= limy) || (refimg[co]==0);
@@ -676,11 +667,13 @@ __global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, i32 *refimg, f32
     }
     atomicAdd(&sum[c], l+prob*prob);
   }
+
 }
 
 __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i32 *Y, i32 *refimg, f32 *V_change, f32 *unary_change, i32 *ainc, i32 *binc, f32 scale, i32 limx, i32 limy, i32 n_factors) {
+  
   extern __shared__ char array [];
-  i32 nc = blockIdx.z;
+  i32 nc = blockDim.z;
   f32 *shared_dL_dp = (f32*) array;
   f32 *shared_prob = &shared_dL_dp[blockDim.x*blockDim.y*nc];
   i32 x = blockIdx.x * 16 + threadIdx.x;
@@ -739,6 +732,8 @@ __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i
       atomicAdd(&V_change[n_factors*nc*nc + i*nc*nc + nc*l +c], change);
     }
   }
+ 
+
 }
 __global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr, i32 *converged, f32 stop_tol) {
   V[threadIdx.x] += lr*V_change[threadIdx.x];
