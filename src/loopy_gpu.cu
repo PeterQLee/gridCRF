@@ -376,7 +376,7 @@ __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * ref
 	for (cc = 1; cc < nc; cc++) {
 	  max = max > RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc] ? max : RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc];
 	}
-	F_V[co]=max;
+	F_V[co+c]=max;
       }
     }
   }
@@ -409,7 +409,7 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
 	for (cc = 1; cc < nc; cc++) {
 	  max = max > CE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc] ? max : CE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc];
 	}
-	F_V[co]=max;
+	F_V[co+c]=max;
       }
     }
     
