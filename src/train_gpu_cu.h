@@ -47,8 +47,8 @@ __global__ void gpu_dice_partial(f32 *p, i32 *EY, f32 *prod, f32 *sum, f32 *X, i
 
 
 
-__global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr, i32 *converged, f32 stop_tol);
-__global__ void gpu_RMSprop_update(f32 *v_curr, f32 *v_old, i32 *converged, f32 gamma, f32 alpha, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary, f32 stop_tol);
+__global__ void gpu_update_params(f32 *V, f32* V_change, f32 lr, i32 *converged, f32 stop_tol, i32 lim);
+__global__ void gpu_RMSprop_update(f32 *v_curr, f32 *v_old, i32 *converged, f32 gamma, f32 alpha, f32 *V, f32 *V_change, i32 n_factors, i32 n_unary, f32 stop_tol, i32 lim);
 
 __global__ void gpu_OrChannel(i32 *inbuffer, i32 *outbuffer, i32 limx, i32 limy);
 #endif

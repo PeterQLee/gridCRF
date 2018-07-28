@@ -99,8 +99,8 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
 
   i32 origin;
   /* transfer matrices */
-  f32 *RE= _mm_malloc(2 * n_factors * 2 * sizeof(f32),32); 
-  f32 *CE= _mm_malloc(2 * n_factors * 2 * sizeof(f32),32);
+  f32 *RE= _mm_malloc(nc * n_factors * nc * sizeof(f32),32); 
+  f32 *CE= _mm_malloc(nc * n_factors * nc * sizeof(f32),32);
 
   #ifdef __AVX__
   __m256 r1,r2,r3,r4;
@@ -109,7 +109,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   #endif
 
   #ifdef __AVX__
-  for (i=0;i<2*n_factors*2;i+=8) {
+  for (i=0;i<nc*n_factors*nc;i+=8) {
     r1=_mm256_load_ps(&V_data[i]);
     r2=_mm256_load_ps(&V_data[i + n_factors*4]);
     //r1=exp256_ps(r1);
@@ -138,7 +138,7 @@ i32* loopyCPU(gridCRF_t* self, PyArrayObject *X,loopy_params_t *lpar,PyArrayObje
   
   }
   #elif __SSE__
-    for (i=0;i<2*n_factors*2;i+=4) {
+    for (i=0;i<nc*n_factors*nc;i+=4) {
     r1=_mm_load_ps(&V_data[i]);
     r2=_mm_load_ps(&V_data[i + n_factors*4]);
     
@@ -496,7 +496,7 @@ static void* _loopyCPU__VtoF(loopycpu_t *l_args) {
   max_marg_diff=0;
   y=start[1];
   for (x=start[0];x<dims[0];x++) {
-    for (;y<dims[1];y++) {
+    for (;y<dims[1];y++) { 
       if (x==stop[0] && y==stop[1]) goto loopyVtoFstop;
       //variable to factor messages
       

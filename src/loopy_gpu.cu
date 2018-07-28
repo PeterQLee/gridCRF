@@ -148,8 +148,8 @@ extern "C" i32 *predict_loopyGPU(gridCRF_t* self, PyArrayObject *X_py, loopy_par
   }
 
   f32 *RE, *CE;
-  cudaMalloc(&RE, sizeof(f32) * 2* n_factors *nc);
-  cudaMalloc(&CE, sizeof(f32) * 2* n_factors *nc);
+  cudaMalloc(&RE, sizeof(f32) * nc* n_factors *nc);
+  cudaMalloc(&CE, sizeof(f32) * nc* n_factors *nc);
 
   f32 **V_F_l = (f32**) malloc(sizeof(f32*) * n_samples);
   f32 **F_V_l = (f32**) malloc(sizeof(f32*) * n_samples);
@@ -260,8 +260,10 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
 
   f32 *RE= gdata->RE, *CE= gdata->CE;
   n_elem = n_factors*nc*nc; //was 4
-  dim3 blockGrid2(n_elem/32/nc/nc + 1);
-  dim3 threadGrid2(32,nc,nc); //todo, change in case 32 is too big
+
+  i32 blockWidth = (i32) ceil(128.0/nc/nc);
+  dim3 blockGrid2(n_elem/blockWidth/nc/nc + 1);
+  dim3 threadGrid2(blockWidth,nc,nc); //todo, change in case 32 is too big
  
   gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(RE, V_data, n_factors, n_elem);
   gpu_swizzle<<<blockGrid2, threadGrid2,0, stream[(curstream++)%n_streams]>>>(CE, V_data + n_elem, n_factors, n_elem);
@@ -478,8 +480,9 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   dim3 factorgrid(2*n_factors,nc);
   dim3 singGrid(nc);
   gpu_loopy_V_F__computeunary<<<dimGrid, singGrid, 0, stream[0]>>>(X, unary_w, unary_c, n_chan);
-  gpu_loopy_V_F__sumfactors<<<dimGrid, factorgrid, sizeof(f32)*n_factors*8, stream[0]>>>(F_V, V_F, unary_c, NULL, n_factors);
+  gpu_loopy_V_F__sumfactors<<<dimGrid, factorgrid, sizeof(f32)*2*(n_factors*2*nc), stream[0]>>>(F_V, V_F, unary_c, NULL, n_factors);
   gpu_loopy_V_F__marginal<<<dimGrid, singGrid, 0, stream[0]>>>(F_V, unary_c, mu, n_factors, stop_thresh, converged);
+  //gpu_loopy_V_F__marginal<<<dimGrid, factorgrid, sizeof(f32)*n_factors*2*nc, stream[0]>>>(F_V, unary_c, mu, n_factors, stop_thresh, converged);
   
   for (i=0;i<n_streams;i++) {
     cudaStreamDestroy(stream[i]);
@@ -549,18 +552,48 @@ __global__ void gpu_loopy_V_F__sumfactors(f32 *F_V, f32 *V_F, f32 *unary_c, cons
   
 }
 
-
+/*
+Calulate marginals using variable to factor message passing
+ */
 __global__ void gpu_loopy_V_F__marginal(f32 *F_V, f32 * unary_c,  f32 * mu, i32 n_factors, f32 stop_thresh, i32 *converged) {
+  #if 0
+  extern __shared__ f32 array[];//
+  f32 *shared_f_v = (f32*) array;//
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
-  i32 c = threadIdx.x;
-
+  //i32 c = threadIdx.x;
+  i32 c = threadIdx.y;//
+  shared_f_v[threadIdx.x*blockDim.y + c] = F_V[COORD3(x,y,threadIdx.x,gridDim.x, gridDim.y, 2*n_factors, blockDim.y) + c];//
+  __syncthreads();//
+  if (threadIdx.x!=0) return;//
   i32 i;
-  i32 origin = COORD2(x,y,gridDim.x, gridDim.y, blockDim.x) + c;
+  //i32 origin = COORD2(x,y,gridDim.x, gridDim.y, blockDim.x) + c;
+  i32 origin = COORD2(x,y,gridDim.x, gridDim.y, blockDim.y) + c;//
   f32 sum = unary_c[origin];
 
   // sum up factors
-  for (i=0;i<n_factors*2;i++) {
+  for (i=0;i<n_factors*2;i++) { //TODO: this can be optimized. Fetch coalesced memory using shared
+    // then sum up in stridesx
+    //sum += F_V[COORD3(x,y,i,gridDim.x, gridDim.y, 2*n_factors, blockDim.x) + c];
+    sum += shared_f_v[i*blockDim.y + c];
+  }
+
+  if (fabsf(sum - mu[origin]) > stop_thresh) {
+    converged[0] = 0;
+  }
+  mu[origin] = sum;
+  #endif
+  i32 x = blockIdx.x;
+  i32 y = blockIdx.y;
+  i32 c = threadIdx.x;
+  i32 i;
+  i32 origin = COORD2(x,y,gridDim.x, gridDim.y, blockDim.x) + c;
+
+  f32 sum = unary_c[origin];
+
+  // sum up factors
+  for (i=0;i<n_factors*2;i++) { //TODO: this can be optimized. Fetch coalesced memory using shared
+    // then sum up in stridesx
     sum += F_V[COORD3(x,y,i,gridDim.x, gridDim.y, 2*n_factors, blockDim.x) + c];
   }
 
