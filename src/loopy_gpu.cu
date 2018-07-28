@@ -272,19 +272,19 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
 
     
   i32 *converged;
-  cudaMalloc(&converged,sizeof(i32));
-  i32 _converged = 1;
-  cudaMemcpy(converged, &_converged, sizeof(i32), cudaMemcpyHostToDevice);
+  assert(cudaMallocManaged(&converged,sizeof(i32))==cudaSuccess);
+  //i32 _converged = 1;
+  //cudaMemcpy(converged, &_converged, sizeof(i32), cudaMemcpyHostToDevice);
+  *converged = 1;
 
   loopygpu_t targs;
   targs.dims = dims;
   targs.lpar = lpar;
   targs.self = self;
   targs.dev_converged = converged;
-  targs.host_converged = &_converged;
   targs.gdata = gdata;
 
-
+  cudaDeviceSynchronize();
   for (it = 0; it < max_it; it++){
 #if VERBOSE
     if (it%10==0){
@@ -294,10 +294,10 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
     gpu_loopy_F_V(&targs);
     gpu_loopy_V_F(&targs);
     
-    if (_converged) break;
+    if (*converged) break;
   }
   #if VERBOSE
-  printf("converged %d %f\n",_converged, lpar->stop_thresh);
+  printf("converged %d %f\n",*converged, lpar->stop_thresh);
   #endif
   i32 *EY = gdata->EY;
 
@@ -307,7 +307,7 @@ extern "C" i32 *loopyGPU(gridCRF_t* self, PyArrayObject *X_py, gpu_loopy_params_
   gpu_loopy_V_F__label<<<dimGrid, singGrid, nc*sizeof(f32)>>>(mu, EY, n_factors);
 
   cudaFree(converged);  
-
+  cudaDeviceSynchronize();
   return gdata->EY;
 }
 
@@ -364,7 +364,7 @@ __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * ref
   i32 cc = c;
   i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
 
-  array[threadIdx.x*blockDim.y+cc] = V_F[origin];
+  array[threadIdx.x*blockDim.y+cc] = V_F[origin + cc];
   __syncthreads();
 
   /* Check bounds for upper factor */
@@ -397,7 +397,7 @@ __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * ref
   i32 c = threadIdx.y;
   i32 cc = c;
   i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
-  array[threadIdx.x*blockDim.y+cc] = V_F[origin]; // shared V_F
+  array[threadIdx.x*blockDim.y+cc] = V_F[origin + cc]; // shared V_F
   __syncthreads();
   
 
@@ -486,7 +486,7 @@ extern "C" void gpu_loopy_V_F(loopygpu_t *targs) {
   }
   
 
-  cudaMemcpy(targs->host_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
+  //cudaMemcpy(targs->host_converged, converged, sizeof(i32), cudaMemcpyDeviceToHost);
  
 }
 

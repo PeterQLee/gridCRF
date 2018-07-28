@@ -225,7 +225,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
       gerror_data[j].prod = prod;
       err=cudaMalloc(&gerror_data[j].prob, sizeof(f32)*dims[0]*dims[1]*nc);
       assert(err==cudaSuccess);
-      error_data[j] = (void*) gerror_data;
+      error_data[j] = (void*) &gerror_data[j];
     }
     break;
   case ENTROPY:
@@ -338,16 +338,16 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
   cudaMemcpy(self->unary, unary_w,  sizeof(f32)*(n_unary), cudaMemcpyDeviceToHost);
 
   //Time to clean up everything
-  cudaFree(V_data);
-  cudaFree(RE);
-  cudaFree(CE);
+  assert(cudaFree(V_data) == cudaSuccess);
+  assert(cudaFree(RE) == cudaSuccess);
+  assert(cudaFree(CE) == cudaSuccess);
 
   /* Clean error function data */
   switch(args->error_func) {
   case DICE:
-    cudaFree(((gpu_dice_error_data_t*)error_data[0])->prod);
+    assert(cudaFree(((gpu_dice_error_data_t*)error_data[0])->prod)==cudaSuccess);
     for (j=0;j<n_samples;j++){
-      cudaFree(((gpu_dice_error_data_t*)error_data[j])->prob);
+      assert(cudaFree(((gpu_dice_error_data_t*)error_data[j])->prob)==cudaSuccess);
     }
     free(error_data);
   }
@@ -358,7 +358,7 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
     rmstmp = (gpu_rmsprop_t*) update_data;
     for (i=0;i<n_samples;i++) {
       for (j=0;j<nc;j++) {
-	cudaFree(rmstmp->vstore_agg[i*nc+j]);
+	assert(cudaFree(rmstmp->vstore_agg[i*nc+j])==cudaSuccess);
       }
     }
     free(rmstmp->vstore_agg);
@@ -370,22 +370,22 @@ extern "C" void GPU_grad_descent(gradient_t *args,i32 epochs,i32 dummy) {
     break;
   }
 
-  cudaFree(g_args.dev_L);
+  assert(cudaFree(g_args.dev_L)==cudaSuccess);
   for (j=0;j<n_samples;j++){
-    cudaFree(mu_l[j]);
-    cudaFree(EY_l[j]);
-    cudaFree(X_l[j]);
-    cudaFree(Y_l[j]);
-    cudaFree(com_l[j]);
-    cudaFree(rom_l[j]);
-    cudaFree(co_pairs_l[j]);
-    cudaFree(unary_c_l[j]);
-    cudaFree(V_F_l[j]);
-    cudaFree(F_V_l[j]);
+    assert(cudaFree(mu_l[j])==cudaSuccess);
+    assert(cudaFree(EY_l[j])==cudaSuccess);
+    assert(cudaFree(X_l[j])==cudaSuccess);
+    assert(cudaFree(Y_l[j])==cudaSuccess);
+    assert(cudaFree(com_l[j])==cudaSuccess);
+    assert(cudaFree(rom_l[j])==cudaSuccess);
+    assert(cudaFree(co_pairs_l[j])==cudaSuccess);
+    assert(cudaFree(unary_c_l[j])==cudaSuccess);
+    assert(cudaFree(V_F_l[j])==cudaSuccess);
+    assert( cudaFree(F_V_l[j])==cudaSuccess);
   }
-  cudaFree(V_change);
-  cudaFree(ainc);
-  cudaFree(binc);
+  assert(cudaFree(V_change)==cudaSuccess);
+  assert(cudaFree(ainc)==cudaSuccess);
+  assert(cudaFree(binc)==cudaSuccess);
   
   free(mu_l);
   free(EY_l);
@@ -586,7 +586,7 @@ __global__ void gpu_entropy_partial(f32 *unary_c, i32 *EY, f32 *X, i32 *Y, i32 *
 }
 
 __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refimg, f32 *p, i32 *ainc, i32 *binc, i32 limx, i32 limy, i32 n_factors) {
-  
+
   // Calculates probability for dice error
   i32 x = blockIdx.x * 16 + threadIdx.x;
   i32 y = blockIdx.y * 16 + threadIdx.y;
@@ -595,6 +595,7 @@ __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refim
   i32 i;
   i32 l;
   i32 co = ((x)*limy + y);
+  //printf("%d %d %d %d %d %d\n", x, y, c, nc, limx, limy);
   i32 cond= (x >= limx || y >= limy) || (refimg[co]==0); //TODO: fix
   f32 total=0.0f;
   extern __shared__ char array[];
@@ -648,6 +649,64 @@ __global__ void gpu_dice_prob(f32 * unary_c, i32 *EY, f32 *V, i32 *Y, i32 *refim
     s1 = shared_sum[threadIdx.x*blockDim.y*nc + threadIdx.y*nc+c] / total;
     p[nc*co+c] = s1;
   }
+
+  #if 0
+    i32 x = blockIdx.x * 16 + threadIdx.x;
+  i32 y = blockIdx.y * 16 + threadIdx.y;
+  i32 c= threadIdx.z;
+  i32 i;
+  i32 l;
+  i32 co = ((x)*limy + y);
+  i32 cond= (x >= limx || y >= limy) || (Y[co*2+c]==0 && Y[co*2+c^1]==0);
+  extern __shared__ char array[];
+  //f32 *shared_V = (f32*) array;  // can copy this by using elements in reange
+
+  f32 *shared_sum = (f32*) array ;//+ n_factors*8*sizeof(f32);
+  f32 sum, max, s1;
+  __syncthreads();
+  
+  if (!cond) {
+    sum = -unary_c[2*co+c];
+    
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i] < 0 || x+ainc[i]>=limx || y+binc[i] < 0 || y+binc[i] >= limy) continue;
+      l= EY[COORD2(x+ainc[i],y+binc[i],limx,limy,1)];
+      sum += V[i*4 + (l)*2 + c];
+    }
+    for (i=0;i<n_factors;i++) {
+      if (x+ainc[i+n_factors] < 0 || x+ainc[i+n_factors]>=limx || y+binc[i+n_factors] < 0 || y+binc[i+n_factors] >= limy) continue;
+    
+      l= EY[COORD2(x+ainc[i+n_factors],y+binc[i+n_factors],limx,limy,1)];
+      sum += V[n_factors*4 + i*4 + (l)*2 + c];
+    }
+    
+    //put sum into shared memory
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2 +c] = sum;
+  }
+  __syncthreads();
+  if(!cond) {
+    
+    if (sum < shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1]){
+      max = sum;
+    }
+    else{
+      max = shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c^1];
+    }
+  }
+  __syncthreads();
+  if (!cond) {  
+    s1 = expf(-shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c]-max);
+
+    shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] = s1;
+  }
+  __syncthreads();
+  // Each thread handles the specific class
+  //Softmax
+  if (!cond) {
+    s1= shared_sum[threadIdx.x*16*2 + threadIdx.y*2+c] / (shared_sum[threadIdx.x*16*2 + threadIdx.y*2]+shared_sum[threadIdx.x*16*2 + threadIdx.y*2+1]); 
+    p[2*co+c] = s1;
+  }
+  #endif
 }
 
 __global__ void gpu_dice_intermediate_summation(f32 *p, i32 *Y, i32 *refimg, f32 *prod, f32 *sum, i32 limx, i32 limy) {
