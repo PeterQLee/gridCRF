@@ -339,10 +339,10 @@ extern "C" void gpu_loopy_F_V(loopygpu_t *targs) {
   
 
   dim3 dimGrid(dims[0],dims[1]);
-  dim3 factorgrid(n_factors);
+  dim3 factorgrid(n_factors,nc);
 		  
-  gpu_loopy_F_V__Flow<<<dimGrid, factorgrid, 0, stream[0]>>>(F_V, V_F, RE, NULL, com, co_pairs, n_factors, nc);
-  gpu_loopy_F_V__Fup<<<dimGrid, factorgrid, 0, stream[1]>>>(F_V, V_F, CE, NULL, rom, co_pairs, n_factors, nc);
+  gpu_loopy_F_V__Flow<<<dimGrid, factorgrid, sizeof(f32)*n_factors*nc, stream[0]>>>(F_V, V_F, RE, NULL, com, co_pairs, n_factors, nc);
+  gpu_loopy_F_V__Fup<<<dimGrid, factorgrid, sizeof(f32)*n_factors*nc, stream[1]>>>(F_V, V_F, CE, NULL, rom, co_pairs, n_factors, nc);
 
   for (i=0;i<2;i++) {
     cudaStreamDestroy(stream[i]);
@@ -356,28 +356,31 @@ extern "C" void gpu_loopy_F_V(loopygpu_t *targs) {
 /* Naive method */
 __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * refimg, const i32 * com, const om_pair * co_pairs,  i32 n_factors, i32 nc){
   /* Naive code*/
+  extern __shared__ f32 array[];
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 n = threadIdx.x;
-  i32 c = 0, cc = 0;
+  i32 c = threadIdx.y;
+  i32 cc = c;
+  i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
+
+  array[threadIdx.x*blockDim.y+cc] = V_F[origin];
+  __syncthreads();
 
   /* Check bounds for upper factor */
   om_pair cop = co_pairs[n];
   if ( ! (x+cop.x <0 || x+cop.x >= gridDim.x || y+cop.y < 0 || y+cop.y >=gridDim.y) ){//&& !(refimg[COORD2(x+cop.x,y+cop.y, gridDim.x, gridDim.y, 1)]==0)) {
     
-    i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
+
     i32 co = origin + com[n] + nc*(n + n_factors);
 
-
     if (!(co< 0 || co >= gridDim.x * gridDim.y * (n_factors*2) *nc)) {
-
-      for (c=0;c<nc;c++) {
-	f32 max = RE[0+n*nc+c] + V_F[origin+0];
-	for (cc = 1; cc < nc; cc++) {
-	  max = max > RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc] ? max : RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc];
-	}
-	F_V[co+c]=max;
+      f32 max = RE[0+n*nc+c] + array[threadIdx.x*blockDim.y];
+      for (cc = 1; cc < nc; cc++) {
+	//max = max > RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc] ? max : RE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc];
+	max = max > RE[cc*n_factors*nc + n*nc + c] + array[threadIdx.x*blockDim.y + cc] ? max : RE[cc*n_factors*nc + n*nc + c] + array[threadIdx.x*blockDim.y + cc];
       }
+      F_V[co+c]=max;
     }
   }
 }
@@ -387,31 +390,36 @@ __global__ void gpu_loopy_F_V__Flow(f32 *F_V, f32 *V_F, f32 *RE, const i32 * ref
 //F_V[co+1] = RE[n*2+1] + V_F[origin] > RE[n_factors*2 + n*2 + 1] + V_F[origin+1] ? RE[n*2+1] + V_F[origin] : RE[n_factors*2 + n*2 + 1] + V_F[origin+1];
 __global__ void gpu_loopy_F_V__Fup(f32 *F_V, f32 *V_F,  f32 *CE, const i32 * refimg, const i32 *rom, const om_pair *co_pairs, i32 n_factors, i32 nc){
   /* Naive code*/
+  extern __shared__ f32 array[];
   i32 x = blockIdx.x;
   i32 y = blockIdx.y;
   i32 n = threadIdx.x;
-  i32 c, cc;
+  i32 c = threadIdx.y;
+  i32 cc = c;
+  i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
+  array[threadIdx.x*blockDim.y+cc] = V_F[origin]; // shared V_F
+  __syncthreads();
   
 
   /* Check bounds for upper factor */
   om_pair cop=co_pairs[n];
   /* Check bounds for lower factor */
   if (!(x-cop.x < 0 || x-cop.x >= gridDim.x || y-cop.y < 0 || y-cop.y >=gridDim.y)){// && !(refimg[COORD2(x-cop.x,y-cop.y, gridDim.x, gridDim.y, 1)]==0)) {
-    i32 origin=COORD3(x,y,0,gridDim.x,gridDim.y,2*n_factors,nc);
+
     //i32 co=origin + rom[n]; //check this
     i32 co = origin + rom[n] + nc*n;
 
     
     if (!(co< 0 || co >= gridDim.x * gridDim.y * (n_factors*2) *nc)) {
 
-      for (c=0;c<nc;c++) {
-	f32 max = CE[0+n*nc+c] + V_F[origin+0];
-	for (cc = 1; cc < nc; cc++) {
-	  max = max > CE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc] ? max : CE[cc*n_factors*nc + n*nc + c] + V_F[origin + cc];
-	}
-	F_V[co+c]=max;
+
+      f32 max = CE[0+n*nc+c] + V_F[origin+0];
+      for (cc = 1; cc < nc; cc++) {
+	max = max > CE[cc*n_factors*nc + n*nc + c] + array[threadIdx.x*blockDim.y+cc] ? max : CE[cc*n_factors*nc + n*nc + c] + array[threadIdx.x*blockDim.y+cc];
       }
+      F_V[co+c]=max;
     }
+
     
     /*
     if (!(co< 0 || co >= gridDim.x * gridDim.y * (n_factors*2) *2)) {
